@@ -1,3 +1,23 @@
+/*
+Main client UI module.
+
+Globals:
+scale: The current DPI scale of the application
+initial_style: The original Dear ImGui style that the application was initialized with.
+font_config: The font config for Dear ImGui
+logged_in_user: The ClientUser of the currently logged in user
+cached_users: A vector of users stored after the last heartbeat to the server
+cached_inbox: A vector of messages that have the logged_in_user in the recipient field stored after the last heartbeat to the server
+cached_outbox: A vector of all messages sent during this client session
+last_heartbeat_time: The UNIX timestamp in seconds of the last heartbeat
+current_frame: The current frame that is being processed (0 to ICHIGO_MAX_FRAMES_IN_FLIGHT - 1)
+ChatClient::vk_context: The vulkan context for the application. Shared with the platform layer via the ChatClient namespace
+ChatClient::must_rebuild_swapchain: Boolean stating whether or not the swapchain is out of date/suboptimal. Shared with the platform layer via the ChatClient namespace
+
+Author: Braeden Hong
+  Date: October 30, 2023
+*/
+
 #include <chrono>
 #include <cassert>
 #include <cstring>
