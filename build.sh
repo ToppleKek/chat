@@ -19,6 +19,12 @@ if [ "${1}" = "run" ]; then
     exit 0
 fi
 
+if [ "${1}" = "runc" ]; then
+    cd build
+    ./$CLIENT_EXE_NAME
+    exit 0
+fi
+
 if [ "${1}" = "brc" ]; then
     clang ${CXX_FLAGS} -l ${LIBS} -I ${INCLUDE} ${CXX_FILES_CLIENT} -o build/${CLIENT_EXE_NAME}
     cd build

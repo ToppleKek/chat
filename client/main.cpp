@@ -461,44 +461,50 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::BeginChild("message_list", ImVec2(ImGui::GetContentRegionAvail().x * 0.8f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
 
         if (ImGui::BeginTabBar("main_tab_bar", ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) {
-            if (ImGui::BeginTabItem("Inbox") && ImGui::BeginTable("message_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
-                ImGui::TableSetupColumn("Sender");
-                ImGui::TableSetupColumn("Message");
-                ImGui::TableSetupScrollFreeze(0, 1);
-                ImGui::TableHeadersRow();
+            if (ImGui::BeginTabItem("Inbox")) {
+                if (ImGui::BeginTable("message_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
+                    ImGui::TableSetupColumn("Sender");
+                    ImGui::TableSetupColumn("Message");
+                    ImGui::TableSetupScrollFreeze(0, 1);
+                    ImGui::TableHeadersRow();
 
-                for (u32 i = 0; i < cached_inbox.size(); ++i) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", cached_inbox.at(i).sender()->name().c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", cached_inbox.at(i).content().c_str());
+                    for (u32 i = 0; i < cached_inbox.size(); ++i) {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", cached_inbox.at(i).sender()->name().c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", cached_inbox.at(i).content().c_str());
+                    }
+
+                    ImGui::EndTable();
                 }
 
-                ImGui::EndTable();
                 ImGui::EndTabItem();
             }
 
-            if (ImGui::BeginTabItem("Outbox") && ImGui::BeginTable("message_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
-                ImGui::TableSetupColumn("Recipient(s)");
-                ImGui::TableSetupColumn("Message");
-                ImGui::TableSetupScrollFreeze(0, 1);
-                ImGui::TableHeadersRow();
+            if (ImGui::BeginTabItem("Outbox")) {
+                if (ImGui::BeginTable("message_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
+                    ImGui::TableSetupColumn("Recipient(s)");
+                    ImGui::TableSetupColumn("Message");
+                    ImGui::TableSetupScrollFreeze(0, 1);
+                    ImGui::TableHeadersRow();
 
-                for (u32 i = 0; i < cached_outbox.size(); ++i) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    auto usernames = cached_outbox.at(i).recipient()->usernames();
-                    std::stringstream ss;
-                    for (u32 j = 0; j < usernames.size(); ++j)
-                        ss << usernames.at(j) << (j == usernames.size() - 1 ? "" : ", ");
+                    for (u32 i = 0; i < cached_outbox.size(); ++i) {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        auto usernames = cached_outbox.at(i).recipient()->usernames();
+                        std::stringstream ss;
+                        for (u32 j = 0; j < usernames.size(); ++j)
+                            ss << usernames.at(j) << (j == usernames.size() - 1 ? "" : ", ");
 
-                    ImGui::Text("%s", ss.str().c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", cached_outbox.at(i).content().c_str());
+                        ImGui::Text("%s", ss.str().c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", cached_outbox.at(i).content().c_str());
+                    }
+
+                    ImGui::EndTable();
                 }
 
-                ImGui::EndTable();
                 ImGui::EndTabItem();
             }
 
