@@ -29,6 +29,7 @@ public:
     T &at(u64 i) { return m_data[i]; }
     const T &at(u64 i) const { assert(i < m_size); return m_data[i]; }
     const T *data() const { return m_data; }
+    T *data() { return m_data; }
     T *release_data() { T *ret = m_data; m_data = new T[16]; m_capacity = 16; m_size = 0; return ret; }
     u64 size() const { return m_size; }
     void clear() { m_size = 0; }

@@ -12,7 +12,7 @@ cached_outbox: A vector of all messages sent during this client session
 last_heartbeat_time: The UNIX timestamp in seconds of the last heartbeat
 current_frame: The current frame that is being processed (0 to ICHIGO_MAX_FRAMES_IN_FLIGHT - 1)
 ChatClient::vk_context: The vulkan context for the application. Shared with the platform layer via the ChatClient namespace
-ChatClient::must_rebuild_swapchain: Boolean stating whether or not the swapchain is out of date/suboptimal. Shared with the platform layer via the ChatClient namespace
+ChatClient::must_rebuild_swapchain: Boolean stating whether or not the vulkan swapchain is out of date/suboptimal. Shared with the platform layer via the ChatClient namespace
 
 Author: Braeden Hong
   Date: October 30, 2023
@@ -56,6 +56,7 @@ static float scale = 1;
 static ImGuiStyle initial_style;
 static ImFontConfig font_config;
 
+static u32 socket_fd = INVALID_SOCKET;
 static ClientUser logged_in_user("");
 static Util::IchigoVector<ClientUser> cached_users;
 static Util::IchigoVector<ClientMessage> cached_inbox;
@@ -133,35 +134,27 @@ static i32 connect_to_server() {
 }
 
 static bool register_user(const std::string &username) {
-    i32 sockfd = connect_to_server();
-    assert(sockfd != -1);
-
     buffer[0] = Opcode::REGISTER;
-    send(sockfd, buffer, 1, 0);
-    send(sockfd, username.c_str(), username.length(), 0);
+    send(socket_fd, buffer, 1, 0);
+    send(socket_fd, username.c_str(), username.length(), 0);
 
     i8 result;
-    recv(sockfd, reinterpret_cast<char *>(&result), 1, 0);
-
-    closesocket(sockfd);
+    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
 
     return result == Error::SUCCESS;
 }
 
 static bool login(const std::string &username) {
     std::printf("Attempting login with username=%s\n", username.c_str());
-    i32 sockfd = connect_to_server();
-    assert(sockfd != -1);
 
     buffer[0] = Opcode::LOGIN;
-    send(sockfd, buffer, 1, 0);
-    send(sockfd, username.c_str(), username.length(), 0);
+    send(socket_fd, buffer, 1, 0);
+    send(socket_fd, username.c_str(), username.length(), 0);
 
     i32 id;
     i8 result;
-    recv(sockfd, reinterpret_cast<char *>(&id), 4, 0);
-    recv(sockfd, reinterpret_cast<char *>(&result), 1, 0);
-    closesocket(sockfd);
+    recv(socket_fd, reinterpret_cast<char *>(&id), 4, 0);
+    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
 
     if (result == Error::SUCCESS) {
         logged_in_user = ClientUser(username);
@@ -176,18 +169,15 @@ static bool login(const std::string &username) {
 
 static bool logout() {
     std::printf("Attempting to logout\n");
-    i32 sockfd = connect_to_server();
-    assert(sockfd != -1);
 
     buffer[0] = Opcode::LOGOUT;
-    send(sockfd, buffer, 1, 0);
+    send(socket_fd, buffer, 1, 0);
 
     i32 id = logged_in_user.id();
-    send(sockfd, reinterpret_cast<char *>(&id), 4, 0);
+    send(socket_fd, reinterpret_cast<char *>(&id), 4, 0);
 
     i8 result;
-    recv(sockfd, reinterpret_cast<char *>(&result), 1, 0);
-    closesocket(sockfd);
+    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
 
     if (result == Error::SUCCESS) {
         logged_in_user = ClientUser("");
@@ -198,45 +188,49 @@ static bool logout() {
 }
 
 static void refresh() {
+    buffer[0] = Opcode::HEARTBEAT;
+    send(socket_fd, buffer, 1, 0);
+    i8 result;
+    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
+
+    assert(result == Error::SUCCESS);
+
     if (!logged_in_user.is_logged_in())
         return;
 
-    i32 socket = connect_to_server();
-    assert(socket != -1);
     {
         buffer[0] = Opcode::GET_USERS;
-        send(socket, buffer, 1, 0);
+        send(socket_fd, buffer, 1, 0);
         std::printf("Sent GET_USERS request.\n");
 
         std::printf("%s\n", logged_in_user.name().c_str());
         // Send id as heartbeat
         i32 id = logged_in_user.id();
-        send(socket, reinterpret_cast<char *>(&id), 4, 0);
+        send(socket_fd, reinterpret_cast<char *>(&id), 4, 0);
 
         i8 result;
-        recv(socket, reinterpret_cast<char *>(&result), 1, 0);
+        recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
 
         // TODO: Report this failure?
         if (result != Error::SUCCESS) {
-            closesocket(socket);
             return;
         }
 
         u32 user_count;
-        recv(socket, reinterpret_cast<char *>(&user_count), 4, 0);
+        recv(socket_fd, reinterpret_cast<char *>(&user_count), 4, 0);
         std::printf("Number of users: %u\n", user_count);
         cached_users.clear();
 
         for (u32 i = 0; i < user_count; ++i) {
             u32 length;
-            recv(socket, reinterpret_cast<char *>(&length), 4, 0);
-            recv(socket, buffer, length, 0);
+            recv(socket_fd, reinterpret_cast<char *>(&length), 4, 0);
+            recv(socket_fd, buffer, length, 0);
             buffer[length] = 0;
             printf("User: %s ", buffer);
             ClientUser user(buffer);
 
-            recv(socket, reinterpret_cast<char *>(&length), 4, 0);
-            recv(socket, buffer, length, 0);
+            recv(socket_fd, reinterpret_cast<char *>(&length), 4, 0);
+            recv(socket_fd, buffer, length, 0);
             buffer[length] = 0;
             printf("Status: %s\n", buffer);
             user.User::set_status(buffer);
@@ -247,34 +241,31 @@ static void refresh() {
         std::printf("Received all users.\n");
 
         // TODO: Report this status?
-        recv(socket, reinterpret_cast<char *>(&result), 1, 0);
-        closesocket(socket);
+        recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
     }
 
-    socket = connect_to_server();
     {
         buffer[0] = Opcode::GET_MESSAGES;
-        send(socket, buffer, 1, 0);
+        send(socket_fd, buffer, 1, 0);
         i32 id = logged_in_user.id();
-        send(socket, reinterpret_cast<char *>(&id), sizeof(id), 0);
+        send(socket_fd, reinterpret_cast<char *>(&id), sizeof(id), 0);
 
         i8 result;
-        recv(socket, reinterpret_cast<char *>(&result), sizeof(result), 0);
+        recv(socket_fd, reinterpret_cast<char *>(&result), sizeof(result), 0);
 
         if (result != Error::SUCCESS) {
-            closesocket(socket);
             return;
         }
 
         u32 message_count;
-        recv(socket, reinterpret_cast<char *>(&message_count), sizeof(message_count), 0);
+        recv(socket_fd, reinterpret_cast<char *>(&message_count), sizeof(message_count), 0);
         std::printf("Number of messages: %u\n", message_count);
 
         cached_inbox.clear();
         for (u32 i = 0; i < message_count; ++i) {
             u32 size;
-            recv(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
-            i32 n = recv(socket, buffer, size, 0);
+            recv(socket_fd, reinterpret_cast<char *>(&size), sizeof(size), 0);
+            i32 n = recv(socket_fd, buffer, size, 0);
             assert(n != -1);
             buffer[n] = 0;
             std::printf("Sender: %s\n", buffer);
@@ -282,8 +273,8 @@ static void refresh() {
             i32 index = find_user_index_by_name(buffer);
             assert(index != -1);
 
-            recv(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
-            n = recv(socket, buffer, size, 0);
+            recv(socket_fd, reinterpret_cast<char *>(&size), sizeof(size), 0);
+            n = recv(socket_fd, buffer, size, 0);
             assert(n != -1);
             buffer[n] = 0;
 
@@ -292,11 +283,9 @@ static void refresh() {
             cached_inbox.append(ClientMessage(buffer, &logged_in_user, &cached_users.at(index)));
         }
 
-        recv(socket, reinterpret_cast<char *>(&result), sizeof(result), 0);
+        recv(socket_fd, reinterpret_cast<char *>(&result), sizeof(result), 0);
         assert(result == Error::SUCCESS);
     }
-
-    closesocket(socket);
 }
 
 static void frame_render() {
@@ -555,16 +544,13 @@ void ChatClient::do_frame(float dpi_scale) {
 
                     if (ImGui::Button("Send", ImVec2(120, 0))) {
                         ClientMessage message(text_input_buffer, message_recipient, &logged_in_user);
-                        i32 socket = connect_to_server();
-                        if (!message.send(socket, logged_in_user.id())) {
+                        if (!message.send(socket_fd, logged_in_user.id())) {
                             modal_request_failed = true;
                         } else {
                             cached_outbox.append(message);
                             ImGui::CloseCurrentPopup();
                             refresh();
                         }
-
-                        closesocket(socket);
                     }
 
                     ImGui::SameLine();
@@ -678,16 +664,12 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::Separator();
 
         if (ImGui::Button("Update", ImVec2(120, 0))) {
-            i32 socket = connect_to_server();
-
-            if (!logged_in_user.set_status(socket, text_input_buffer)) {
+            if (!logged_in_user.set_status(socket_fd, text_input_buffer)) {
                 modal_request_failed = true;
             } else {
                 ImGui::CloseCurrentPopup();
                 refresh();
             }
-
-            closesocket(socket);
         }
 
         ImGui::SameLine();
@@ -1054,9 +1036,16 @@ found_present_mode:
     if (result != NO_ERROR) {
         std::printf("Failed to init wsa\n");
     }
+
+    socket_fd = connect_to_server();
+    assert(socket_fd != SOCKET_ERROR);
 }
 
 void ChatClient::deinit() {
     if (logged_in_user.is_logged_in())
         logout();
+
+    buffer[0] = Opcode::GOODBYE;
+    send(socket_fd, buffer, 1, 0);
+    closesocket(socket_fd);
 }

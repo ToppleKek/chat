@@ -28,6 +28,8 @@ enum Opcode {
     LOGIN,
     LOGOUT,
     REGISTER,
+    GOODBYE,
+    HEARTBEAT,
 };
 
 enum Error {

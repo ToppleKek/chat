@@ -13,4 +13,10 @@ public:
         ret.append(name());
         return ret;
     }
+
+    i64  connection_fd() const { return m_connection_fd; }
+    void set_connection_fd(i64 connection_fd) { m_connection_fd = connection_fd; }
+
+private:
+    i64 m_connection_fd = -1;
 };
