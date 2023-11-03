@@ -16,7 +16,7 @@ extern bool must_rebuild_swapchain;
 extern u32 window_width;
 extern u32 window_height;
 void init();
-void do_frame(float dpi_scale);
+void do_frame(f32 dpi_scale);
 void deinit();
 
 std::FILE *platform_open_file(const std::string &path, const std::string &mode);

@@ -61,7 +61,7 @@ void IchigoVulkan::Context::init(const char **extensions, u32 num_extensions) {
         }
     }
 
-    static const float queue_priority[] = {1.0f};
+    static const f32 queue_priority[] = {1.0f};
     VkDeviceQueueCreateInfo queue_create_info = {};
     queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     queue_create_info.queueFamilyIndex = queue_family_index;

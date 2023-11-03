@@ -52,7 +52,7 @@ EMBED("build/frag.spv", fragment_shader)
 EMBED("build/vert.spv", vertex_shader)
 }
 
-static float scale = 1;
+static f32 scale = 1;
 static ImGuiStyle initial_style;
 static ImFontConfig font_config;
 
@@ -62,6 +62,8 @@ static Util::IchigoVector<ClientUser> cached_users;
 static Util::IchigoVector<ClientMessage> cached_inbox;
 static Util::IchigoVector<ClientMessage> cached_outbox;
 static u32 last_heartbeat_time = 0;
+static u32 new_message_count = 0;
+static bool must_show_new_message_popup = false;
 
 static u8 current_frame = 0;
 IchigoVulkan::Context ChatClient::vk_context{};
@@ -204,7 +206,6 @@ static void refresh() {
         std::printf("Sent GET_USERS request.\n");
 
         std::printf("%s\n", logged_in_user.name().c_str());
-        // Send id as heartbeat
         i32 id = logged_in_user.id();
         send(socket_fd, reinterpret_cast<char *>(&id), 4, 0);
 
@@ -261,14 +262,16 @@ static void refresh() {
         recv(socket_fd, reinterpret_cast<char *>(&message_count), sizeof(message_count), 0);
         std::printf("Number of messages: %u\n", message_count);
 
-        cached_inbox.clear();
+        u32 old_message_count = cached_inbox.size();
         for (u32 i = 0; i < message_count; ++i) {
+            i32 message_id = -1;
+            recv(socket_fd, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
+
             u32 size;
             recv(socket_fd, reinterpret_cast<char *>(&size), sizeof(size), 0);
             i32 n = recv(socket_fd, buffer, size, 0);
             assert(n != -1);
             buffer[n] = 0;
-            std::printf("Sender: %s\n", buffer);
 
             i32 index = find_user_index_by_name(buffer);
             assert(index != -1);
@@ -278,13 +281,25 @@ static void refresh() {
             assert(n != -1);
             buffer[n] = 0;
 
-            std::printf("Content: %s\n", buffer);
 
-            cached_inbox.append(ClientMessage(buffer, &logged_in_user, &cached_users.at(index)));
+            for (u32 i = 0; i < cached_inbox.size(); ++i) {
+                if (cached_inbox.at(i).id() == message_id)
+                    goto next;
+            }
+
+            cached_inbox.append(ClientMessage(buffer, &logged_in_user, &cached_users.at(index), message_id));
+next:;
         }
 
         recv(socket_fd, reinterpret_cast<char *>(&result), sizeof(result), 0);
         assert(result == Error::SUCCESS);
+
+        i32 delta = cached_inbox.size() - old_message_count;
+
+        if (delta > 0) {
+            must_show_new_message_popup = true;
+            new_message_count += delta;
+        }
     }
 }
 
@@ -527,7 +542,6 @@ void ChatClient::do_frame(float dpi_scale) {
                 ImGui::TableNextColumn();
 
                 if (ImGui::Selectable(cached_users.at(i).name().c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
-                    std::printf("Selected\n");
                     modal_request_failed = false;
                     std::memset(text_input_buffer, 0, ARRAY_LEN(text_input_buffer));
                     message_recipient = &cached_users.at(i);
@@ -599,6 +613,12 @@ void ChatClient::do_frame(float dpi_scale) {
         }
 
         ImGui::Text("Logged in as: %s", logged_in_user.name().c_str());
+
+        if (must_show_new_message_popup) {
+            must_show_new_message_popup = false;
+            ImGui::OpenPopup("New message(s)");
+        }
+
     } else {
         if (ImGui::Button("Login")) {
             modal_request_failed = false;
@@ -682,6 +702,19 @@ void ChatClient::do_frame(float dpi_scale) {
 
         if (ImGui::Button("Cancel", ImVec2(120, 0)))
             ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopupModal("New message(s)", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("You have %u new message(s)", new_message_count);
+        ImGui::Separator();
+
+        if (ImGui::Button("Ok", ImVec2(120, 0))) {
+            new_message_count = 0;
+            must_show_new_message_popup = false;
+            ImGui::CloseCurrentPopup();
+        }
 
         ImGui::EndPopup();
     }

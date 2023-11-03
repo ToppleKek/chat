@@ -308,15 +308,16 @@ static void send_message(i32 socket) {
         return;
     }
 
+    i32 message_id = next_id++;
     if (recipient_count == 1)
-        messages.append(Message(buffer, recipients.at(0), sender));
+        messages.append(Message(buffer, recipients.at(0), sender, message_id));
     else
         assert(false); // TODO: Group?
 
     buffer[0] = Error::SUCCESS;
     send(socket, buffer, 1, 0);
-
-    std::printf("Message count: %llu Message content: %s Message recipient: %s\n", messages.size(), messages.at(0).content().c_str(), messages.at(0).recipient()->usernames().at(0).c_str());
+    std::printf("Sending message id=%d\n", message_id);
+    send(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
 }
 
 static void get_messages(i32 socket) {
@@ -344,6 +345,9 @@ static void get_messages(i32 socket) {
     send(socket, reinterpret_cast<char *>(&message_count), sizeof(message_count), 0);
 
     for (u32 i = 0; i < message_count; ++i) {
+        i32 message_id = messages_for_user.at(i).id();
+        send(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
+
         u32 size = messages_for_user.at(i).sender()->name().length();
         send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
         send(socket, messages_for_user.at(i).sender()->name().c_str(), size, 0);

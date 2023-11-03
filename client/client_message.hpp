@@ -6,7 +6,9 @@ class ClientMessage : public Message {
 public:
     ClientMessage() : Message() {}
     ClientMessage(const std::string &message, Recipient *recipient, User *sender) : Message(message, recipient, sender) {}
+    ClientMessage(const std::string &message, Recipient *recipient, User *sender, i32 id) : Message(message, recipient, sender, id) {}
 
+    void set_read(bool read) { m_read = read; }
     bool send(i32 socket, i32 connection_id) {
         assert(socket != -1);
 
@@ -35,7 +37,17 @@ public:
         ::send(socket, Message::content().c_str(), Message::content().length(), 0);
 
         recv(socket, reinterpret_cast<char *>(&result), sizeof(result), 0);
+        assert(result == Error::SUCCESS);
 
-        return result == Error::SUCCESS;
+        i32 message_id;
+        recv(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
+        set_id(message_id);
+
+        std::printf("got id %d\n", id());
+
+        return true;
     }
+
+private:
+    bool m_read = false;
 };
