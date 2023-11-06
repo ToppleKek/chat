@@ -20,6 +20,7 @@ void do_frame(f32 dpi_scale);
 void deinit();
 
 std::FILE *platform_open_file(const std::string &path, const std::string &mode);
+const std::string platform_get_save_file_name(const char **extension_filter, const u16 extension_filter_count);
 bool platform_file_exists(const char *path);
 Util::IchigoVector<std::string> platform_recurse_directory(const std::string &path, const char **extension_filter, const u16 extension_filter_count);
 }

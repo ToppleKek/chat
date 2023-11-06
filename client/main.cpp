@@ -28,6 +28,7 @@ Author: Braeden Hong
 #include "chat_client.hpp"
 #include "client_user.hpp"
 #include "client_message.hpp"
+#include "server_connection.hpp"
 
 #include "../thirdparty/imgui/imgui.h"
 #include "../thirdparty/imgui/imgui_impl_vulkan.h"
@@ -56,11 +57,6 @@ static f32 scale = 1;
 static ImGuiStyle initial_style;
 static ImFontConfig font_config;
 
-static u32 socket_fd = INVALID_SOCKET;
-static ClientUser logged_in_user("");
-static Util::IchigoVector<ClientUser> cached_users;
-static Util::IchigoVector<ClientMessage> cached_inbox;
-static Util::IchigoVector<ClientMessage> cached_outbox;
 static u32 last_heartbeat_time = 0;
 static u32 new_message_count = 0;
 static bool must_show_new_message_popup = false;
@@ -95,212 +91,24 @@ static const VkVertexInputAttributeDescription VERTEX_ATTRIBUTE_DESCRIPTIONS[] =
  {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, color)}
 };
 
-static Vertex vertices[] = {
-    {{0.0f, -0.5f}, {0.2f, 0.0f, 1.0f}},
-    {{0.5f, 0.5f}, {0.2f, 0.0f, 1.0f}},
-    {{0.5f, -0.5f}, {0.2f, 0.0f, 1.0f}},
-
-    {{0.0f, -0.5f}, {0.2f, 0.0f, 1.0f}},
-    {{0.5f, 0.5f}, {0.2f, 0.0f, 1.0f}},
-    {{0.0f, 0.5f}, {0.2f, 0.0f, 1.0f}},
-    // {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-    // {{0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-    // {{0.0f, 0.5f}, {1.0f, 1.0f, 1.0f}},
-};
-
-static char buffer[4096]{};
-
-static i32 find_user_index_by_name(const std::string &name) {
-    for (u32 i = 0; i < cached_users.size(); ++i) {
-        if (cached_users.at(i).name() == name)
-            return i;
-    }
-
-    return -1;
-}
-
-static i32 connect_to_server() {
-    u32 sockfd = 0;
-    sockaddr_in server_addr{};
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(8080);
-    InetPton(AF_INET, "127.0.0.1", &server_addr.sin_addr.S_un.S_addr);
-
-    if (connect(sockfd, reinterpret_cast<sockaddr *>(&server_addr), sizeof(server_addr)) == SOCKET_ERROR) {
-        std::printf("connect: SOCKET_ERROR\n");
-        return -1;
-    }
-
-    return sockfd;
-}
-
-static bool register_user(const std::string &username) {
-    buffer[0] = Opcode::REGISTER;
-    send(socket_fd, buffer, 1, 0);
-    send(socket_fd, username.c_str(), username.length(), 0);
-
-    i8 result;
-    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
-
-    return result == Error::SUCCESS;
-}
-
-static bool login(const std::string &username) {
-    std::printf("Attempting login with username=%s\n", username.c_str());
-
-    buffer[0] = Opcode::LOGIN;
-    send(socket_fd, buffer, 1, 0);
-    send(socket_fd, username.c_str(), username.length(), 0);
-
-    i32 id;
-    i8 result;
-    recv(socket_fd, reinterpret_cast<char *>(&id), 4, 0);
-    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
-
-    if (result == Error::SUCCESS) {
-        logged_in_user = ClientUser(username);
-        logged_in_user.set_logged_in(true);
-        logged_in_user.User::set_status("Online");
-        logged_in_user.set_id(id);
-        return true;
-    }
-
-    return false;
-}
-
-static bool logout() {
-    std::printf("Attempting to logout\n");
-
-    buffer[0] = Opcode::LOGOUT;
-    send(socket_fd, buffer, 1, 0);
-
-    i32 id = logged_in_user.id();
-    send(socket_fd, reinterpret_cast<char *>(&id), 4, 0);
-
-    i8 result;
-    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
-
-    if (result == Error::SUCCESS) {
-        logged_in_user = ClientUser("");
-        return true;
-    }
-
-    return false;
-}
-
 static void refresh() {
-    buffer[0] = Opcode::HEARTBEAT;
-    send(socket_fd, buffer, 1, 0);
-    i8 result;
-    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
+    i32 delta = ServerConnection::refresh();
 
-    assert(result == Error::SUCCESS);
-
-    if (!logged_in_user.is_logged_in())
-        return;
-
-    {
-        buffer[0] = Opcode::GET_USERS;
-        send(socket_fd, buffer, 1, 0);
-        std::printf("Sent GET_USERS request.\n");
-
-        std::printf("%s\n", logged_in_user.name().c_str());
-        i32 id = logged_in_user.id();
-        send(socket_fd, reinterpret_cast<char *>(&id), 4, 0);
-
-        i8 result;
-        recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
-
-        // TODO: Report this failure?
-        if (result != Error::SUCCESS) {
-            return;
-        }
-
-        u32 user_count;
-        recv(socket_fd, reinterpret_cast<char *>(&user_count), 4, 0);
-        std::printf("Number of users: %u\n", user_count);
-        cached_users.clear();
-
-        for (u32 i = 0; i < user_count; ++i) {
-            u32 length;
-            recv(socket_fd, reinterpret_cast<char *>(&length), 4, 0);
-            recv(socket_fd, buffer, length, 0);
-            buffer[length] = 0;
-            printf("User: %s ", buffer);
-            ClientUser user(buffer);
-
-            recv(socket_fd, reinterpret_cast<char *>(&length), 4, 0);
-            recv(socket_fd, buffer, length, 0);
-            buffer[length] = 0;
-            printf("Status: %s\n", buffer);
-            user.User::set_status(buffer);
-
-            cached_users.append(user);
-        }
-
-        std::printf("Received all users.\n");
-
-        // TODO: Report this status?
-        recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
+    if (delta > 0) {
+        must_show_new_message_popup = true;
+        new_message_count += delta;
     }
+}
 
-    {
-        buffer[0] = Opcode::GET_MESSAGES;
-        send(socket_fd, buffer, 1, 0);
-        i32 id = logged_in_user.id();
-        send(socket_fd, reinterpret_cast<char *>(&id), sizeof(id), 0);
+static void export_messages(const std::string &filename) {
+    std::stringstream ss;
+    ss << "Sender,Content\n";
+    for (u32 i = 0; i < ServerConnection::cached_inbox.size(); ++i)
+        ss << '"' << ServerConnection::cached_inbox.at(i).sender()->name() << "\",\"" << ServerConnection::cached_inbox.at(i).content() << "\"\n";
 
-        i8 result;
-        recv(socket_fd, reinterpret_cast<char *>(&result), sizeof(result), 0);
-
-        if (result != Error::SUCCESS) {
-            return;
-        }
-
-        u32 message_count;
-        recv(socket_fd, reinterpret_cast<char *>(&message_count), sizeof(message_count), 0);
-        std::printf("Number of messages: %u\n", message_count);
-
-        u32 old_message_count = cached_inbox.size();
-        for (u32 i = 0; i < message_count; ++i) {
-            i32 message_id = -1;
-            recv(socket_fd, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
-
-            u32 size;
-            recv(socket_fd, reinterpret_cast<char *>(&size), sizeof(size), 0);
-            i32 n = recv(socket_fd, buffer, size, 0);
-            assert(n != -1);
-            buffer[n] = 0;
-
-            i32 index = find_user_index_by_name(buffer);
-            assert(index != -1);
-
-            recv(socket_fd, reinterpret_cast<char *>(&size), sizeof(size), 0);
-            n = recv(socket_fd, buffer, size, 0);
-            assert(n != -1);
-            buffer[n] = 0;
-
-
-            for (u32 i = 0; i < cached_inbox.size(); ++i) {
-                if (cached_inbox.at(i).id() == message_id)
-                    goto next;
-            }
-
-            cached_inbox.append(ClientMessage(buffer, &logged_in_user, &cached_users.at(index), message_id));
-next:;
-        }
-
-        recv(socket_fd, reinterpret_cast<char *>(&result), sizeof(result), 0);
-        assert(result == Error::SUCCESS);
-
-        i32 delta = cached_inbox.size() - old_message_count;
-
-        if (delta > 0) {
-            must_show_new_message_popup = true;
-            new_message_count += delta;
-        }
-    }
+    std::FILE *output_file = ChatClient::platform_open_file(filename, "wb");
+    std::fwrite(ss.str().c_str(), sizeof(char), ss.str().length(), output_file);
+    std::fclose(output_file);
 }
 
 static void frame_render() {
@@ -345,9 +153,6 @@ static void frame_render() {
     vkCmdBeginRenderPass(ChatClient::vk_context.command_buffers[current_frame], &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(ChatClient::vk_context.command_buffers[current_frame], VK_PIPELINE_BIND_POINT_GRAPHICS, ChatClient::vk_context.graphics_pipeline);
 
-    VkDeviceSize vertex_buffer_offsets = 0;
-    vkCmdBindVertexBuffers(ChatClient::vk_context.command_buffers[current_frame], 0, 1, &ChatClient::vk_context.vertex_buffer, &vertex_buffer_offsets);
-
     VkViewport viewport{};
     viewport.x        = 0.0f;
     viewport.y        = 0.0f;
@@ -362,7 +167,6 @@ static void frame_render() {
     scissor.extent = ChatClient::vk_context.extent;
     vkCmdSetScissor(ChatClient::vk_context.command_buffers[current_frame], 0, 1, &scissor);
 
-    vkCmdDraw(ChatClient::vk_context.command_buffers[current_frame], ARRAY_LEN(vertices), 1, 0, 0);
     ImGui_ImplVulkan_RenderDrawData(imgui_draw_data, ChatClient::vk_context.command_buffers[current_frame]);
     vkCmdEndRenderPass(ChatClient::vk_context.command_buffers[current_frame]);
     // ** DRAW END **
@@ -372,23 +176,23 @@ static void frame_render() {
     VkPipelineStageFlags wait_stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit_info{};
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit_info.waitSemaphoreCount = 1;
-    submit_info.pWaitSemaphores = &ChatClient::vk_context.image_acquired_semaphores[current_frame];
-    submit_info.pWaitDstStageMask = &wait_stages;
-    submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &ChatClient::vk_context.command_buffers[current_frame];
+    submit_info.waitSemaphoreCount   = 1;
+    submit_info.pWaitSemaphores      = &ChatClient::vk_context.image_acquired_semaphores[current_frame];
+    submit_info.pWaitDstStageMask    = &wait_stages;
+    submit_info.commandBufferCount   = 1;
+    submit_info.pCommandBuffers      = &ChatClient::vk_context.command_buffers[current_frame];
     submit_info.signalSemaphoreCount = 1;
-    submit_info.pSignalSemaphores = &ChatClient::vk_context.render_complete_semaphores[current_frame];
+    submit_info.pSignalSemaphores    = &ChatClient::vk_context.render_complete_semaphores[current_frame];
 
     VK_ASSERT_OK(vkQueueSubmit(ChatClient::vk_context.queue, 1, &submit_info, ChatClient::vk_context.fences[current_frame]));
 
     VkPresentInfoKHR present_info{};
     present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present_info.waitSemaphoreCount = 1;
-    present_info.pWaitSemaphores = &ChatClient::vk_context.render_complete_semaphores[current_frame];
-    present_info.swapchainCount = 1;
-    present_info.pSwapchains = &ChatClient::vk_context.swapchain;
-    present_info.pImageIndices = &image_index;
+    present_info.pWaitSemaphores    = &ChatClient::vk_context.render_complete_semaphores[current_frame];
+    present_info.swapchainCount     = 1;
+    present_info.pSwapchains        = &ChatClient::vk_context.swapchain;
+    present_info.pImageIndices      = &image_index;
 
     VK_ASSERT_OK(vkQueuePresentKHR(ChatClient::vk_context.queue, &present_info));
     current_frame = (current_frame + 1) % ICHIGO_MAX_FRAMES_IN_FLIGHT;
@@ -397,8 +201,10 @@ static void frame_render() {
 void ChatClient::do_frame(float dpi_scale) {
     if (ChatClient::must_rebuild_swapchain) {
         std::printf("Rebuilding swapchain\n");
+        u64 start = __rdtsc();
         ImGui_ImplVulkan_SetMinImageCount(2);
         ChatClient::vk_context.rebuild_swapchain(ChatClient::window_width, ChatClient::window_height);
+        std::printf("Took %llu\n", __rdtsc() - start);
         ChatClient::must_rebuild_swapchain = false;
     }
 
@@ -435,9 +241,9 @@ void ChatClient::do_frame(float dpi_scale) {
             ImGui_ImplVulkan_CreateFontsTexture(command_buffer);
 
             VkSubmitInfo end_info{};
-            end_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            end_info.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             end_info.commandBufferCount = 1;
-            end_info.pCommandBuffers = &command_buffer;
+            end_info.pCommandBuffers    = &command_buffer;
             err = vkEndCommandBuffer(command_buffer);
             VK_ASSERT_OK(err);
             err = vkQueueSubmit(ChatClient::vk_context.queue, 1, &end_info, VK_NULL_HANDLE);
@@ -466,12 +272,11 @@ void ChatClient::do_frame(float dpi_scale) {
     ImGui::SetNextWindowPos({0, 0});
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
     ImGui::Begin("main_window", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
-
     static char text_input_buffer[CHAT_MAX_MESSAGE_LENGTH];
     static ClientUser *message_recipient = nullptr;
     static bool modal_request_failed = false;
 
-    if (logged_in_user.is_logged_in()) {
+    if (ServerConnection::logged_in_user.is_logged_in()) {
         // ** Message and user tables **
         ImGui::BeginChild("message_list", ImVec2(ImGui::GetContentRegionAvail().x * 0.8f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
 
@@ -483,12 +288,12 @@ void ChatClient::do_frame(float dpi_scale) {
                     ImGui::TableSetupScrollFreeze(0, 1);
                     ImGui::TableHeadersRow();
 
-                    for (u32 i = 0; i < cached_inbox.size(); ++i) {
+                    for (u32 i = 0; i < ServerConnection::cached_inbox.size(); ++i) {
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
-                        ImGui::Text("%s", cached_inbox.at(i).sender()->name().c_str());
+                        ImGui::Text("%s", ServerConnection::cached_inbox.at(i).sender()->name().c_str());
                         ImGui::TableNextColumn();
-                        ImGui::Text("%s", cached_inbox.at(i).content().c_str());
+                        ImGui::Text("%s", ServerConnection::cached_inbox.at(i).content().c_str());
                     }
 
                     ImGui::EndTable();
@@ -504,17 +309,17 @@ void ChatClient::do_frame(float dpi_scale) {
                     ImGui::TableSetupScrollFreeze(0, 1);
                     ImGui::TableHeadersRow();
 
-                    for (u32 i = 0; i < cached_outbox.size(); ++i) {
+                    for (u32 i = 0; i < ServerConnection::cached_outbox.size(); ++i) {
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
-                        auto usernames = cached_outbox.at(i).recipient()->usernames();
+                        auto usernames = ServerConnection::cached_outbox.at(i).recipient()->usernames();
                         std::stringstream ss;
                         for (u32 j = 0; j < usernames.size(); ++j)
                             ss << usernames.at(j) << (j == usernames.size() - 1 ? "" : ", ");
 
                         ImGui::Text("%s", ss.str().c_str());
                         ImGui::TableNextColumn();
-                        ImGui::Text("%s", cached_outbox.at(i).content().c_str());
+                        ImGui::Text("%s", ServerConnection::cached_outbox.at(i).content().c_str());
                     }
 
                     ImGui::EndTable();
@@ -537,19 +342,19 @@ void ChatClient::do_frame(float dpi_scale) {
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
 
-            for (u32 i = 0; i < cached_users.size(); ++i) {
+            for (u32 i = 0; i < ServerConnection::cached_users.size(); ++i) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
 
-                if (ImGui::Selectable(cached_users.at(i).name().c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+                if (ImGui::Selectable(ServerConnection::cached_users.at(i).name().c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
                     modal_request_failed = false;
                     std::memset(text_input_buffer, 0, ARRAY_LEN(text_input_buffer));
-                    message_recipient = &cached_users.at(i);
+                    message_recipient = &ServerConnection::cached_users.at(i);
                     ImGui::OpenPopup("Send message");
                 }
 
                 ImGui::TableNextColumn();
-                ImGui::Text("%s", cached_users.at(i).status().c_str());
+                ImGui::Text("%s", ServerConnection::cached_users.at(i).status().c_str());
             }
 
 
@@ -563,11 +368,11 @@ void ChatClient::do_frame(float dpi_scale) {
                     ImGui::Separator();
 
                     if (ImGui::Button("Send", ImVec2(120, 0))) {
-                        ClientMessage message(text_input_buffer, message_recipient, &logged_in_user);
-                        if (!message.send(socket_fd, logged_in_user.id())) {
+                        ClientMessage message(text_input_buffer, message_recipient, &ServerConnection::logged_in_user);
+                        if (!ServerConnection::send_message(message)) {
                             modal_request_failed = true;
                         } else {
-                            cached_outbox.append(message);
+                            ServerConnection::cached_outbox.append(message);
                             ImGui::CloseCurrentPopup();
                             refresh();
                         }
@@ -605,14 +410,20 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::SameLine();
 
         if (ImGui::Button("Logout")) {
-            if (!logout()) {
+            if (!ServerConnection::logout())
                 std::printf("[error] Something is very wrong. We failed to logout.\n");
-            } else {
-                cached_users.clear();
-            }
         }
 
-        ImGui::Text("Logged in as: %s", logged_in_user.name().c_str());
+        ImGui::SameLine();
+
+        if (ImGui::Button("Export messages...")) {
+            static const char *extension = "*.csv";
+            const std::string filename = ChatClient::platform_get_save_file_name(&extension, 1);
+            if (!filename.empty())
+                export_messages(filename);
+        }
+
+        ImGui::Text("Logged in as: %s", ServerConnection::logged_in_user.name().c_str());
 
         if (must_show_new_message_popup) {
             must_show_new_message_popup = false;
@@ -644,7 +455,7 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::Separator();
 
         if (ImGui::Button("Register", ImVec2(120, 0))) {
-            if (!register_user(text_input_buffer))
+            if (!ServerConnection::register_user(text_input_buffer))
                 modal_request_failed = true;
             else
                 ImGui::CloseCurrentPopup();
@@ -666,7 +477,7 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::Separator();
 
         if (ImGui::Button("Login", ImVec2(120, 0))) {
-            if (!login(text_input_buffer)) {
+            if (!ServerConnection::login(text_input_buffer)) {
                 modal_request_failed = true;
             } else {
                 ImGui::CloseCurrentPopup();
@@ -690,7 +501,7 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::Separator();
 
         if (ImGui::Button("Update", ImVec2(120, 0))) {
-            if (!logged_in_user.set_status(socket_fd, text_input_buffer)) {
+            if (!ServerConnection::set_status_of_logged_in_user(text_input_buffer)) {
                 modal_request_failed = true;
             } else {
                 ImGui::CloseCurrentPopup();
@@ -972,15 +783,6 @@ found_present_mode:
 
     VK_ASSERT_OK(vkCreateCommandPool(ChatClient::vk_context.logical_device, &command_pool_create_info, nullptr, &ChatClient::vk_context.command_pool));
 
-    // ** Vertex buffers **
-    ChatClient::vk_context.create_buffer(
-        sizeof(Vertex) * ARRAY_LEN(vertices),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        &ChatClient::vk_context.vertex_buffer,
-        &ChatClient::vk_context.vertex_buffer_memory
-    );
-
     // ** Command buffers **
     VkCommandBufferAllocateInfo command_buffer_alloc_info{};
     command_buffer_alloc_info.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1004,12 +806,6 @@ found_present_mode:
         VK_ASSERT_OK(vkCreateFence(ChatClient::vk_context.logical_device, &fence_create_info, nullptr, &ChatClient::vk_context.fences[i]));
     }
 
-
-    // ** !!!!!! FIXME: WE SHOULD FILL THE VERTEX BUFFER EACH FRAME **
-    void *vertex_buffer_data;
-    vkMapMemory(ChatClient::vk_context.logical_device, ChatClient::vk_context.vertex_buffer_memory, 0, VK_WHOLE_SIZE, 0, &vertex_buffer_data);
-    std::memcpy(vertex_buffer_data, vertices, sizeof(Vertex) * ARRAY_LEN(vertices));
-    vkUnmapMemory(ChatClient::vk_context.logical_device, ChatClient::vk_context.vertex_buffer_memory);
 
     // Init imgui
     {
@@ -1037,9 +833,7 @@ found_present_mode:
     // Fonts
     {
         auto io = ImGui::GetIO();
-        // io.Fonts->AddFontFromFileTTF("noto.ttf", 18, nullptr, io.Fonts->GetGlyphRangesJapanese());
         io.Fonts->AddFontFromMemoryTTF((void *) noto_font, noto_font_len, 18, &font_config, io.Fonts->GetGlyphRangesJapanese());
-        // io.Fonts->AddFontFromFileTTF("noto.ttf", 18);
 
         // Upload fonts to GPU
         VkCommandPool command_pool = ChatClient::vk_context.command_pool;
@@ -1076,15 +870,9 @@ found_present_mode:
         std::printf("Failed to init wsa\n");
     }
 
-    socket_fd = connect_to_server();
-    assert(socket_fd != SOCKET_ERROR);
+    ServerConnection::connect_to_server();
 }
 
 void ChatClient::deinit() {
-    if (logged_in_user.is_logged_in())
-        logout();
-
-    buffer[0] = Opcode::GOODBYE;
-    send(socket_fd, buffer, 1, 0);
-    closesocket(socket_fd);
+    ServerConnection::deinit();
 }

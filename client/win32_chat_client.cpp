@@ -27,8 +27,20 @@ static wchar_t *to_wide_char(const char *str) {
     return wide_buf;
 }
 
-static void free_wide_char_conversion(wchar_t *buf) {
+static inline void free_wide_char_conversion(wchar_t *buf) {
     delete[] buf;
+}
+
+static inline void free_wide_char_conversion(char *buf) {
+    delete[] buf;
+}
+
+static char *from_wide_char(const wchar_t *str) {
+    i32 u8_buf_size = WideCharToMultiByte(CP_UTF8, 0, str, -1, nullptr, 0, nullptr, nullptr);
+    assert(u8_buf_size > 0);
+    char *u8_bytes = new char[u8_buf_size]();
+    WideCharToMultiByte(CP_UTF8, 0, str, -1, u8_bytes, u8_buf_size, nullptr, nullptr);
+    return u8_bytes;
 }
 
 std::FILE *ChatClient::platform_open_file(const std::string &path, const std::string &mode) {
@@ -46,6 +58,37 @@ std::FILE *ChatClient::platform_open_file(const std::string &path, const std::st
     // assert(ret != nullptr);
     delete[] wide_buf;
     delete[] mode_wide_buf;
+    return ret;
+}
+
+const std::string ChatClient::platform_get_save_file_name(const char **extension_filter, const u16 extension_filter_count) {
+    static wchar_t extension_filter_option[1024];
+    static wchar_t filename[1024];
+    std::memset(filename, 0, sizeof(filename));
+    std::memset(extension_filter_option, 0, sizeof(extension_filter_option));
+
+    for (u32 i = 0, pos = 0; i < extension_filter_count; ++i) {
+        wchar_t *extension = to_wide_char(extension_filter[i]);
+        wcscpy(extension_filter_option + pos, extension);
+        pos += wcslen(extension) + 1;
+        wcscpy(extension_filter_option + pos, extension);
+        pos += wcslen(extension) + 1;
+        free_wide_char_conversion(extension);
+    }
+
+    OPENFILENAMEW options{};
+    options.lStructSize = sizeof(OPENFILENAME);
+    options.hwndOwner   = window_handle;
+    options.lpstrFilter = extension_filter_option;
+    options.lpstrFile   = filename;
+    options.nMaxFile    = sizeof(filename);
+    options.Flags       = OFN_EXPLORER;
+
+    GetSaveFileNameW(&options);
+
+    char *u8_bytes = from_wide_char(filename);
+    std::string ret = u8_bytes;
+    free_wide_char_conversion(u8_bytes);
     return ret;
 }
 

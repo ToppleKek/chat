@@ -222,18 +222,28 @@ void IchigoVulkan::Context::create_framebuffers() {
 }
 
 void IchigoVulkan::Context::rebuild_swapchain(u32 window_width, u32 window_height) {
+    u64 start = __rdtsc();
     vkDeviceWaitIdle(logical_device);
+    std::printf("Waiting for device idle took %llu\n", __rdtsc() - start);
+    start = __rdtsc();
     for (u32 i = 0; i < frame_buffers.size(); ++i)
         vkDestroyFramebuffer(logical_device, frame_buffers.at(i), VK_NULL_HANDLE);
+    std::printf("Destroying framebuffer took %llu\n", __rdtsc() - start);
 
+    start = __rdtsc();
     for (u32 i = 0; i < swapchain_image_view_count; ++i)
         vkDestroyImageView(logical_device, swapchain_image_views[i], VK_NULL_HANDLE);
 
+    std::printf("Destroying imageview took %llu\n", __rdtsc() - start);
+    start = __rdtsc();
     vkDestroySwapchainKHR(logical_device, swapchain, VK_NULL_HANDLE);
+    std::printf("Destroying swapchain took %llu\n", __rdtsc() - start);
 
     delete[] swapchain_images;
     delete[] swapchain_image_views;
 
+    start = __rdtsc();
     create_swapchain_and_images(window_width, window_height);
     create_framebuffers();
+    std::printf("Recreation took %llu\n", __rdtsc() - start);
 }
