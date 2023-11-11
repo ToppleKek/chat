@@ -16,6 +16,8 @@ using f64 = double;
 
 #define VK_ASSERT_OK(err) assert(err == VK_SUCCESS)
 #define ARRAY_LEN(a) (sizeof(a) / sizeof(a[0]))
+#define ICHIGO_INFO(fmt, ...) std::printf("(info) %s:%d: " fmt "\n", __FILE__, __LINE__ __VA_OPT__(, ) __VA_ARGS__)
+#define ICHIGO_ERROR(fmt, ...) std::printf("(error) %s:%d: " fmt "\n", __FILE__, __LINE__ __VA_OPT__(, ) __VA_ARGS__)
 
 #define CHAT_MAX_STATUS_LENGTH 32
 #define CHAT_MAX_MESSAGE_LENGTH 256

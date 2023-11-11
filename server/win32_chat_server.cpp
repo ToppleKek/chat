@@ -123,5 +123,6 @@ Util::IchigoVector<std::string> ChatServer::platform_recurse_directory(const std
 i32 main() {
     SetConsoleOutputCP(CP_UTF8);
     ChatServer::init();
+    ChatServer::deinit();
     return 0;
 }

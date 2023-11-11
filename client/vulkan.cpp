@@ -1,5 +1,10 @@
 #include "vulkan.hpp"
-#include <malloc.h>
+
+#ifdef ICHIGO_VULKAN_DEBUG
+#define VERIFICATION_LAYER_COUNT 1
+#else
+#define VERIFICATION_LAYER_COUNT 0
+#endif
 
 void IchigoVulkan::Context::init(const char **extensions, u32 num_extensions) {
     // Instance creation
@@ -17,7 +22,7 @@ void IchigoVulkan::Context::init(const char **extensions, u32 num_extensions) {
     create_info.pApplicationInfo = &app_info;
     create_info.enabledExtensionCount = num_extensions;
     create_info.ppEnabledExtensionNames = extensions;
-    create_info.enabledLayerCount = 1;
+    create_info.enabledLayerCount = VERIFICATION_LAYER_COUNT;
     create_info.ppEnabledLayerNames = layers;
 
     auto ret = vkCreateInstance(&create_info, nullptr, &vk_instance);

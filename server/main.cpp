@@ -10,17 +10,18 @@
 #include "chat_server.hpp"
 #include "server_user.hpp"
 #include "../message.hpp"
+#include "journal.hpp"
 
-#define RETURN_IF_DROPPED(RECV_RET)                        \
-{                                                          \
-    if (RECV_RET == -1) {                                  \
-        std::printf("[warn] Client dropped connection\n"); \
-        return;                                            \
-    }                                                      \
-}                                                          \
+#define RETURN_IF_DROPPED(RECV_RET)                \
+{                                                  \
+    if (RECV_RET == -1) {                          \
+        ICHIGO_ERROR("Client dropped connection"); \
+        return;                                    \
+    }                                              \
+}                                                  \
 
 static char buffer[4096]{};
-static u32 next_id = 0;
+static i32 next_id = 0;
 static Util::IchigoVector<pollfd> poll_connection_fds;
 static Util::IchigoVector<ServerUser> users;
 static Util::IchigoVector<Message> messages;
@@ -59,6 +60,15 @@ static i32 find_user_index_by_id(i32 id) {
     return -1;
 }
 
+static i32 find_message_index_by_id(i32 id) {
+    for (u32 i = 0; i < messages.size(); ++i) {
+        if (messages.at(i).id() == id)
+            return i;
+    }
+
+    return -1;
+}
+
 static i32 find_user_index_by_socket_fd(u32 socket) {
     for (u32 i = 0; i < users.size(); ++i) {
         if (users.at(i).connection_fd() == socket)
@@ -68,12 +78,16 @@ static i32 find_user_index_by_socket_fd(u32 socket) {
     return -1;
 }
 
+static i32 get_next_id() {
+    i32 ret = ++next_id;
+    Journal::UpdateIdTransaction transaction(ret);
+    Journal::commit_transaction(&transaction);
+    return ret;
+}
+
 static void get_users(u32 socket) {
     i32 id;
-    if (poll_recv(socket, reinterpret_cast<char *>(&id), 4) == -1) {
-        std::printf("[warn] Client dropped connection\n");
-        return;
-    }
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), sizeof(id)));
 
     i32 user_index = find_user_index_by_id(id);
     if (user_index == -1) {
@@ -109,13 +123,8 @@ static void get_users(u32 socket) {
 }
 
 static void register_user(u32 socket) {
-    std::printf("[debug] waiting to receive name...\n");
-
     i32 n = poll_recv(socket, buffer, sizeof(buffer) - 1);
-    if (n == -1) {
-        std::printf("[warn] Client dropped connection\n");
-        return;
-    }
+    RETURN_IF_DROPPED(n);
 
     buffer[n] = 0;
 
@@ -125,34 +134,33 @@ static void register_user(u32 socket) {
         return;
     }
 
+    const Journal::NewUserTransaction transaction(buffer);
+    Journal::commit_transaction(&transaction);
+
     users.append(ServerUser(buffer));
-    std::printf("[info] Registered user: %s\n", buffer);
+    ICHIGO_INFO("Registered user: %s", buffer);
     buffer[0] = Error::SUCCESS;
     send(socket, buffer, 1, 0);
 }
 
 static void login(u32 socket) {
-    i32 id = next_id++;
-    std::printf("[debug] waiting to receive login name...\n");
-
     i32 n = poll_recv(socket, buffer, sizeof(buffer) - 1);
-    if (n == -1) {
-        std::printf("[warn] Client dropped connection\n");
-        return;
-    }
+    RETURN_IF_DROPPED(n);
 
     buffer[n] = 0;
 
     i32 index = find_user_index_by_name(buffer);
     if (index == -1 || users.at(index).is_logged_in()) {
-        std::printf("[info] User %s already logged in or does not exist.\n", buffer);
+        ICHIGO_INFO("User %s already logged in or does not exist.", buffer);
 
-        send(socket, reinterpret_cast<char *>(&id), 4, 0);
-        --next_id;
+        i32 invalid_id = -1;
+        send(socket, reinterpret_cast<char *>(&invalid_id), sizeof(invalid_id), 0);
         buffer[0] = Error::INVALID_REQUEST;
         send(socket, buffer, 1, 0);
         return;
     }
+
+    i32 id = get_next_id();
 
     users.at(index).set_status("Online");
     users.at(index).set_logged_in(true);
@@ -160,23 +168,19 @@ static void login(u32 socket) {
     users.at(index).set_id(id);
     users.at(index).set_connection_fd(socket);
 
-    send(socket, reinterpret_cast<char *>(&id), 4, 0);
-    std::printf("[info] User logged in: %s\n", buffer);
+    send(socket, reinterpret_cast<char *>(&id), sizeof(id), 0);
+    ICHIGO_INFO("User logged in: %s", buffer);
     buffer[0] = Error::SUCCESS;
     send(socket, buffer, 1, 0);
 }
 
 static void logout(u32 socket) {
-    std::printf("[debug] waiting to receive logout id...\n");
     i32 id;
-    if (poll_recv(socket, reinterpret_cast<char *>(&id), 4) == -1) {
-        std::printf("[warn] Client dropped connection\n");
-        return;
-    }
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), sizeof(id)));
 
     i32 index = find_user_index_by_id(id);
     if (index == -1 || !users.at(index).is_logged_in() || users.at(index).connection_fd() != socket) {
-        std::printf("[info] User id=%d is not logged in.\n", id);
+        ICHIGO_INFO("User id=%d is not logged in.", id);
         buffer[0] = Error::INVALID_REQUEST;
         send(socket, buffer, 1, 0);
         return;
@@ -187,13 +191,13 @@ static void logout(u32 socket) {
     users.at(index).set_last_heartbeat_time(0);
     users.at(index).set_id(-1);
 
-    std::printf("[info] User logged out: %s\n", users.at(index).name().c_str());
+    ICHIGO_INFO("User logged out: %s", users.at(index).name().c_str());
     buffer[0] = Error::SUCCESS;
     send(socket, buffer, 1, 0);
 }
 
 static void goodbye(u32 socket) {
-    std::printf("[info] Farewell socket %u\n", socket);
+    ICHIGO_INFO("Farewell socket %u", socket);
 
     u32 i = 0;
     for (; i < poll_connection_fds.size(); ++i) {
@@ -224,17 +228,13 @@ success:
 }
 
 static void set_status(u32 socket) {
-    std::printf("[debug] waiting to receive id to change status...\n");
     i32 id;
 
-    if (poll_recv(socket, reinterpret_cast<char *>(&id), 4) == -1) {
-        std::printf("[warn] Client dropped connection\n");
-        return;
-    }
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), sizeof(id)));
 
     i32 index = find_user_index_by_id(id);
     if (index == -1 || !users.at(index).is_logged_in()) {
-        std::printf("[info] User id=%d is not logged in or was not found to update status.\n", id);
+        ICHIGO_INFO("User id=%d is not logged in or was not found to update status.", id);
         buffer[0] = Error::INVALID_REQUEST;
         send(socket, buffer, 1, 0);
         return;
@@ -244,12 +244,8 @@ static void set_status(u32 socket) {
     send(socket, buffer, 1, 0);
 
     i32 n = poll_recv(socket, buffer, sizeof(buffer) - 1);
-    if (n == -1) {
-        std::printf("[warn] Client dropped connection\n");
-        return;
-    }
+    RETURN_IF_DROPPED(n);
 
-    std::printf("DEBUG: n=%d\n", n);
     buffer[n] = 0;
 
     if (n == 0 || n > CHAT_MAX_STATUS_LENGTH) {
@@ -259,7 +255,7 @@ static void set_status(u32 socket) {
     }
 
     users.at(index).set_status(buffer);
-    std::printf("[info] User \"%s\" updated status to \"%s\"\n", users.at(index).name().c_str(), buffer);
+    ICHIGO_INFO("User \"%s\" updated status to \"%s\"", users.at(index).name().c_str(), buffer);
 
     buffer[0] = Error::SUCCESS;
     send(socket, buffer, 1, 0);
@@ -284,16 +280,13 @@ static void send_message(i32 socket) {
     Util::IchigoVector<Recipient *> recipients;
     RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&recipient_count), sizeof(recipient_count)));
 
-    std::printf("Got message being sent to %d users\n", recipient_count);
     for (u32 i = 0; i < recipient_count; ++i) {
         i32 n;
         u32 recipient_name_size;
         RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&recipient_name_size), sizeof(recipient_name_size)));
         RETURN_IF_DROPPED((n = poll_recv(socket, buffer, recipient_name_size)));
         buffer[n] = 0;
-        std::printf("Got buffer %s\n", buffer);
         recipients.append(&users.at(find_user_index_by_name(buffer)));
-        std::printf("Recipient: %s\n", recipients.at(i)->usernames().at(0).c_str());
     }
 
     i32 n;
@@ -308,15 +301,17 @@ static void send_message(i32 socket) {
         return;
     }
 
-    i32 message_id = next_id++;
-    if (recipient_count == 1)
-        messages.append(Message(buffer, recipients.at(0), sender, message_id));
-    else
+    i32 message_id = get_next_id();
+    if (recipient_count == 1) {
+        const Message message(buffer, recipients.at(0), sender, message_id);
+        const Journal::NewMessageTransaction transaction(message.sender()->name(), recipients.at(0)->usernames().at(0), RECIPIENT_TYPE_USER, message.content());
+        Journal::commit_transaction(&transaction);
+        messages.append(message);
+    } else
         assert(false); // TODO: Group?
 
     buffer[0] = Error::SUCCESS;
     send(socket, buffer, 1, 0);
-    std::printf("Sending message id=%d\n", message_id);
     send(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
 }
 
@@ -365,7 +360,7 @@ static void prune_dead_connections() {
     u64 now = time(nullptr);
     for (u32 i = 0; i < connection_heartbeat_times.size(); ++i) {
         if (now - connection_heartbeat_times.at(i) > 20) {
-            std::printf("[info] Socket did not say goodbye properly, but they are assumed to be dead since the last heartbeat was a long time ago!\n");
+            ICHIGO_INFO("Socket did not say goodbye properly, but they are assumed to be dead since the last heartbeat was a long time ago!");
             i32 user_index = find_user_index_by_socket_fd(poll_connection_fds.at(i).fd);
 
             if (user_index != -1) {
@@ -380,7 +375,65 @@ static void prune_dead_connections() {
 }
 
 void ChatServer::init() {
-    std::printf("Running\n");
+    Journal::init("default.chatjournal");
+
+    while (Journal::has_more_transactions()) {
+        Journal::Transaction *transaction = Journal::next_transaction();
+        if (!transaction) {
+            ICHIGO_ERROR("Failed to parse transaction. The server will now operate without a journal!");
+            break;
+        }
+
+        switch (transaction->operation()) {
+            case Journal::Operation::NEW_USER: {
+                Journal::NewUserTransaction *new_user_transaction = static_cast<Journal::NewUserTransaction *>(transaction);
+                ICHIGO_INFO("New user read from journal: %s", new_user_transaction->username().c_str());
+                users.append(ServerUser(new_user_transaction->username()));
+            } break;
+            case Journal::Operation::NEW_MESSAGE: {
+                Journal::NewMessageTransaction *new_message_transaction = static_cast<Journal::NewMessageTransaction *>(transaction);
+                ICHIGO_INFO("New message read from journal: sender=%s recipient=%s content=%s", new_message_transaction->sender().c_str(), new_message_transaction->recipient().c_str(), new_message_transaction->content().c_str());
+                i32 sender_index = find_user_index_by_name(new_message_transaction->sender());
+                assert(sender_index != -1);
+
+                Recipient *recipient = nullptr;
+                if (new_message_transaction->recipient_type() == RECIPIENT_TYPE_USER) {
+                    i32 recipient_index = find_user_index_by_name(new_message_transaction->recipient());
+                    assert(recipient_index != -1);
+                    recipient = &users.at(recipient_index);
+                } else if (new_message_transaction->recipient_type() == RECIPIENT_TYPE_GROUP) {
+                    // TODO: Groups
+                    assert(false && "Unimplemented!");
+                } else {
+                    ICHIGO_ERROR("Invalid recipient type when reading new message from journal");
+                    continue;
+                }
+
+                assert(sender_index != -1);
+                // The journal is expected to have updated the 'next id' through the 'UPDATE_ID' transaction before adding a new message
+                messages.append(Message(new_message_transaction->content(), recipient, &users.at(sender_index), next_id));
+            } break;
+            case Journal::Operation::DELETE_MESSAGE: {
+                Journal::DeleteMessageTransaction *delete_message_transaction = static_cast<Journal::DeleteMessageTransaction *>(transaction);
+                ICHIGO_INFO("Deleting message id: %u", delete_message_transaction->id());
+                i32 message_index = find_message_index_by_id(delete_message_transaction->id());
+                assert(message_index != -1);
+                messages.remove(message_index);
+            }; break;
+            case Journal::Operation::UPDATE_ID: {
+                Journal::UpdateIdTransaction *update_id_transaction = static_cast<Journal::UpdateIdTransaction *>(transaction);
+                ICHIGO_INFO("Updating next id from journal: %u", update_id_transaction->id());
+                next_id = update_id_transaction->id();
+            } break;
+            default: {
+                ICHIGO_ERROR("Unimplemented");
+            }
+        }
+
+        Journal::return_transaction(transaction);
+    }
+
+    ICHIGO_INFO("Running");
 
     [[maybe_unused]] WSADATA wsa_data;
     assert(WSAStartup(MAKEWORD(2, 2), &wsa_data) == 0);
@@ -408,7 +461,7 @@ void ChatServer::init() {
         i32 poll_result = WSAPoll(&poll_listen_fd, 1, 1);
 
         if (poll_result == SOCKET_ERROR) {
-            std::printf("[error] Poll failed. Error code: %d\n", WSAGetLastError());
+            ICHIGO_ERROR("Poll failed. Error code: %d", WSAGetLastError());
             break;
         }
 
@@ -417,7 +470,7 @@ void ChatServer::init() {
             poll_connection_fds.append({ connection_fd, POLLRDNORM, 0 });
             connection_heartbeat_times.append(time(nullptr));
 
-            std::printf("[debug] Accepted new connection\n");
+            ICHIGO_INFO("Accepted new connection");
         }
 
         poll_result = WSAPoll(poll_connection_fds.data(), poll_connection_fds.size(), 1);
@@ -428,12 +481,12 @@ void ChatServer::init() {
                     u32 connection_fd = poll_connection_fds.at(i).fd;
 
                     if (poll_recv(connection_fd, buffer, 1) == -1) {
-                        std::printf("[warn] Client dropped connection before sending opcode\n");
+                        ICHIGO_ERROR("Client dropped connection before sending opcode");
                         continue;
                     }
 
                     Opcode opcode = static_cast<Opcode>(buffer[0]);
-                    std::printf("[info] opcode=%d\n", opcode);
+                    ICHIGO_INFO("opcode=%d", opcode);
 
                     switch (opcode) {
                         case SEND_MESSAGE: send_message(connection_fd); break;
@@ -455,4 +508,5 @@ void ChatServer::init() {
 }
 
 void ChatServer::deinit() {
+    Journal::deinit();
 }
