@@ -13,6 +13,7 @@ extern ClientUser logged_in_user;
 
 void connect_to_server();
 bool send_message(ClientMessage &message);
+bool delete_message(ClientMessage &message);
 bool set_status_of_logged_in_user(const std::string &status);
 bool register_user(const std::string &username);
 bool login(const std::string &username);

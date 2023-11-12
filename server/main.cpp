@@ -315,6 +315,42 @@ static void send_message(i32 socket) {
     send(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
 }
 
+static void delete_message(i32 socket) {
+    i32 id;
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), sizeof(id)));
+
+    i32 user_index = find_user_index_by_id(id);
+    if (user_index == -1) {
+        buffer[0] = Error::INVALID_REQUEST;
+        send(socket, buffer, 1, 0);
+        return;
+    }
+
+    buffer[0] = Error::SUCCESS;
+    send(socket, buffer, 1, 0);
+
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), sizeof(id)));
+    i32 message_index = find_message_index_by_id(id);
+
+    if (message_index == -1) {
+        buffer[0] = Error::INVALID_REQUEST;
+        send(socket, buffer, 1, 0);
+        return;
+    }
+
+    if (messages.at(message_index).recipient()->usernames().at(0) == users.at(user_index).name()) {
+        const Journal::DeleteMessageTransaction transaction(id);
+        Journal::commit_transaction(&transaction);
+
+        messages.remove(message_index);
+        buffer[0] = Error::SUCCESS;
+        send(socket, buffer, 1, 0);
+    } else {
+        buffer[0] = Error::UNAUTHORIZED;
+        send(socket, buffer, 1, 0);
+    }
+}
+
 static void get_messages(i32 socket) {
     i32 id;
     RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), 4));
@@ -489,15 +525,16 @@ void ChatServer::init() {
                     ICHIGO_INFO("opcode=%d", opcode);
 
                     switch (opcode) {
-                        case SEND_MESSAGE: send_message(connection_fd); break;
-                        case GET_MESSAGES: get_messages(connection_fd); break;
-                        case     REGISTER: register_user(connection_fd); break;
-                        case        LOGIN: login(connection_fd); break;
-                        case       LOGOUT: logout(connection_fd); break;
-                        case    GET_USERS: get_users(connection_fd); break;
-                        case   SET_STATUS: set_status(connection_fd); break;
-                        case      GOODBYE: goodbye(connection_fd); break;
-                        case    HEARTBEAT: heartbeat(connection_fd); break;
+                        case   SEND_MESSAGE: send_message(connection_fd);   break;
+                        case DELETE_MESSAGE: delete_message(connection_fd); break;
+                        case   GET_MESSAGES: get_messages(connection_fd);   break;
+                        case       REGISTER: register_user(connection_fd);  break;
+                        case          LOGIN: login(connection_fd);          break;
+                        case         LOGOUT: logout(connection_fd);         break;
+                        case      GET_USERS: get_users(connection_fd);      break;
+                        case     SET_STATUS: set_status(connection_fd);     break;
+                        case        GOODBYE: goodbye(connection_fd);        break;
+                        case      HEARTBEAT: heartbeat(connection_fd);      break;
                     }
                 }
             }

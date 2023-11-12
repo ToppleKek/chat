@@ -37,7 +37,10 @@ public:
         ::send(socket, Message::content().c_str(), Message::content().length(), 0);
 
         recv(socket, reinterpret_cast<char *>(&result), sizeof(result), 0);
-        assert(result == Error::SUCCESS);
+
+        if (result != Error::SUCCESS)
+            return false;
+
 
         i32 message_id;
         recv(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
@@ -46,6 +49,30 @@ public:
         std::printf("got id %d\n", id());
 
         return true;
+    }
+
+    bool delete_from_server(i32 socket, i32 connection_id) {
+        assert(socket != -1);
+
+        u8 opcode = Opcode::DELETE_MESSAGE;
+        ::send(socket, reinterpret_cast<char *>(&opcode), sizeof(opcode), 0);
+        ::send(socket, reinterpret_cast<char *>(&connection_id), sizeof(connection_id), 0);
+
+        u8 result;
+        recv(socket, reinterpret_cast<char *>(&result), sizeof(result), 0);
+
+        if (result != Error::SUCCESS)
+            return false;
+
+        i32 message_id = id();
+        ::send(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
+
+        recv(socket, reinterpret_cast<char *>(&result), sizeof(result), 0);
+        return result == Error::SUCCESS;
+    }
+
+    bool operator==(const ClientMessage &rhs) {
+        return id() == rhs.id();
     }
 
 private:

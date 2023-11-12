@@ -24,6 +24,7 @@ using f64 = double;
 
 enum Opcode {
     SEND_MESSAGE,
+    DELETE_MESSAGE,
     GET_MESSAGES,
     GET_USERS,
     SET_STATUS,

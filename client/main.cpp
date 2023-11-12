@@ -282,9 +282,10 @@ void ChatClient::do_frame(float dpi_scale) {
 
         if (ImGui::BeginTabBar("main_tab_bar", ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) {
             if (ImGui::BeginTabItem("Inbox")) {
-                if (ImGui::BeginTable("message_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
-                    ImGui::TableSetupColumn("Sender");
-                    ImGui::TableSetupColumn("Message");
+                if (ImGui::BeginTable("message_table", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
+                    ImGui::TableSetupColumn("Sender", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+                    ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, 90.0f);
                     ImGui::TableSetupScrollFreeze(0, 1);
                     ImGui::TableHeadersRow();
 
@@ -294,6 +295,24 @@ void ChatClient::do_frame(float dpi_scale) {
                         ImGui::Text("%s", ServerConnection::cached_inbox.at(i).sender()->name().c_str());
                         ImGui::TableNextColumn();
                         ImGui::Text("%s", ServerConnection::cached_inbox.at(i).content().c_str());
+                        ImGui::TableNextColumn();
+
+                        ImGuiTable *table = ImGui::GetCurrentTable();
+                        ImRect row_rect(
+                            table->WorkRect.Min.x,
+                            table->RowPosY1,
+                            table->WorkRect.Max.x,
+                            table->RowPosY2
+                        );
+                        row_rect.ClipWith(table->BgClipRect);
+
+                        bool hovered = ImGui::IsMouseHoveringRect(row_rect.Min, row_rect.Max, false);
+                        ImGui::PushID(i);
+                        if (hovered && ImGui::SmallButton("Delete")) {
+                            if (!ServerConnection::delete_message(ServerConnection::cached_inbox.at(i)))
+                                ICHIGO_ERROR("Failed to delete message");
+                        }
+                        ImGui::PopID();
                     }
 
                     ImGui::EndTable();
@@ -368,13 +387,17 @@ void ChatClient::do_frame(float dpi_scale) {
                     ImGui::Separator();
 
                     if (ImGui::Button("Send", ImVec2(120, 0))) {
-                        ClientMessage message(text_input_buffer, message_recipient, &ServerConnection::logged_in_user);
-                        if (!ServerConnection::send_message(message)) {
+                        if (std::strlen(text_input_buffer) == 0) {
                             modal_request_failed = true;
                         } else {
-                            ServerConnection::cached_outbox.append(message);
-                            ImGui::CloseCurrentPopup();
-                            refresh();
+                            ClientMessage message(text_input_buffer, message_recipient, &ServerConnection::logged_in_user);
+                            if (!ServerConnection::send_message(message)) {
+                                modal_request_failed = true;
+                            } else {
+                                ServerConnection::cached_outbox.append(message);
+                                ImGui::CloseCurrentPopup();
+                                refresh();
+                            }
                         }
                     }
 
@@ -455,10 +478,14 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::Separator();
 
         if (ImGui::Button("Register", ImVec2(120, 0))) {
-            if (!ServerConnection::register_user(text_input_buffer))
+            if (std::strlen(text_input_buffer) == 0) {
                 modal_request_failed = true;
-            else
-                ImGui::CloseCurrentPopup();
+            } else {
+                if (!ServerConnection::register_user(text_input_buffer))
+                    modal_request_failed = true;
+                else
+                    ImGui::CloseCurrentPopup();
+            }
         }
 
         ImGui::SameLine();
@@ -477,11 +504,15 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::Separator();
 
         if (ImGui::Button("Login", ImVec2(120, 0))) {
-            if (!ServerConnection::login(text_input_buffer)) {
+            if (std::strlen(text_input_buffer) == 0) {
                 modal_request_failed = true;
             } else {
-                ImGui::CloseCurrentPopup();
-                refresh();
+                if (!ServerConnection::login(text_input_buffer)) {
+                    modal_request_failed = true;
+                } else {
+                    ImGui::CloseCurrentPopup();
+                    refresh();
+                }
             }
         }
 
@@ -501,11 +532,15 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::Separator();
 
         if (ImGui::Button("Update", ImVec2(120, 0))) {
-            if (!ServerConnection::set_status_of_logged_in_user(text_input_buffer)) {
+            if (std::strlen(text_input_buffer) == 0) {
                 modal_request_failed = true;
             } else {
-                ImGui::CloseCurrentPopup();
-                refresh();
+                if (!ServerConnection::set_status_of_logged_in_user(text_input_buffer)) {
+                    modal_request_failed = true;
+                } else {
+                    ImGui::CloseCurrentPopup();
+                    refresh();
+                }
             }
         }
 

@@ -65,6 +65,14 @@ bool ServerConnection::send_message(ClientMessage &message) {
     return message.send(socket_fd, ServerConnection::logged_in_user.id());
 }
 
+bool ServerConnection::delete_message(ClientMessage &message) {
+    std::lock_guard<std::mutex> guard(socket_access_mutex);
+
+    bool ret = message.delete_from_server(socket_fd, ServerConnection::logged_in_user.id());
+    ServerConnection::cached_inbox.remove(ServerConnection::cached_inbox.index_of(message));
+    return ret;
+}
+
 bool ServerConnection::set_status_of_logged_in_user(const std::string &status) {
     std::lock_guard<std::mutex> guard(socket_access_mutex);
 
