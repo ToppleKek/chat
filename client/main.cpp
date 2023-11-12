@@ -31,6 +31,7 @@ Author: Braeden Hong
 #include "server_connection.hpp"
 
 #include "../thirdparty/imgui/imgui.h"
+#include "../thirdparty/imgui/imgui_internal.h"
 #include "../thirdparty/imgui/imgui_impl_vulkan.h"
 
 #define EMBED(FNAME, VNAME)                                                               \
