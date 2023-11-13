@@ -275,6 +275,7 @@ void ChatClient::do_frame(float dpi_scale) {
     ImGui::Begin("main_window", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
     static char text_input_buffer[CHAT_MAX_MESSAGE_LENGTH];
     static ClientUser *message_recipient = nullptr;
+    static Group *group_message_recipient = nullptr;
     static bool modal_request_failed = false;
     static Util::IchigoVector<bool> check_boxes;
 
@@ -334,9 +335,12 @@ void ChatClient::do_frame(float dpi_scale) {
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
                         auto usernames = ServerConnection::cached_outbox.at(i).recipient()->usernames();
+                        std::printf("USERNAME SIZES: %u\n", usernames.size());
                         std::stringstream ss;
-                        for (u32 j = 0; j < usernames.size(); ++j)
+                        for (u32 j = 0; j < usernames.size(); ++j) {
+                            std::printf("!!!USERNAME: %s\n", usernames.at(j).c_str());
                             ss << usernames.at(j) << (j == usernames.size() - 1 ? "" : ", ");
+                        }
 
                         ImGui::Text("%s", ss.str().c_str());
                         ImGui::TableNextColumn();
@@ -430,18 +434,18 @@ void ChatClient::do_frame(float dpi_scale) {
                 if (ImGui::Selectable(ServerConnection::cached_groups.at(i).name().c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
                     modal_request_failed = false;
                     std::memset(text_input_buffer, 0, ARRAY_LEN(text_input_buffer));
-                    // message_recipient = &ServerConnection::cached_users.at(i);
-                    // ImGui::OpenPopup("Send message");
+                    group_message_recipient = &ServerConnection::cached_groups.at(i);
+                    ImGui::OpenPopup("Send group message");
                 }
             }
 
 
-            if (ImGui::BeginPopupModal("Send message", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (ImGui::BeginPopupModal("Send group message", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                 if (modal_request_failed)
                     ImGui::Text("Send failed.");
 
-                if (message_recipient) {
-                    ImGui::Text("New message to %s", message_recipient->name().c_str());
+                if (group_message_recipient) {
+                    ImGui::Text("New group message to group \"%s\"", group_message_recipient->name().c_str());
                     ImGui::InputText("Content", text_input_buffer, ARRAY_LEN(text_input_buffer));
                     ImGui::Separator();
 
@@ -449,7 +453,7 @@ void ChatClient::do_frame(float dpi_scale) {
                         if (std::strlen(text_input_buffer) == 0) {
                             modal_request_failed = true;
                         } else {
-                            ClientMessage message(text_input_buffer, message_recipient, &ServerConnection::logged_in_user);
+                            ClientMessage message(text_input_buffer, group_message_recipient, &ServerConnection::logged_in_user);
                             if (!ServerConnection::send_message(message)) {
                                 modal_request_failed = true;
                             } else {

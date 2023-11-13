@@ -1,6 +1,7 @@
 #pragma once
 #include "chat_client.hpp"
 #include "../message.hpp"
+#include "../group.hpp"
 
 class ClientMessage : public Message {
 public:
@@ -23,14 +24,21 @@ public:
             return false;
 
         Util::IchigoVector<std::string> recipient_usernames = Message::recipient()->usernames();
-        u32 recipient_count = recipient_usernames.size();
-
-        ::send(socket, reinterpret_cast<char *>(&recipient_count), sizeof(recipient_count), 0);
-        for (u32 i = 0; i < recipient_count; ++i) {
-            u32 name_length = recipient_usernames.at(i).length();
-            ::send(socket, reinterpret_cast<char *>(&name_length), sizeof(name_length), 0);
-            ::send(socket, recipient_usernames.at(i).c_str(), recipient_usernames.at(i).length(), 0);
+        u8 recipient_type;
+        std::string recipient_name;
+        if (recipient_usernames.size() > 1) {
+            recipient_type = RECIPIENT_TYPE_GROUP;
+            recipient_name = static_cast<const Group *>(Message::recipient())->name();
+        } else {
+            recipient_type = RECIPIENT_TYPE_USER;
+            recipient_name = Message::recipient()->usernames().at(0);
         }
+
+        ::send(socket, reinterpret_cast<char *>(&recipient_type), sizeof(recipient_type), 0);
+
+        u32 name_length = recipient_name.length();
+        ::send(socket, reinterpret_cast<char *>(&name_length), sizeof(name_length), 0);
+        ::send(socket, recipient_name.c_str(), recipient_name.length(), 0);
 
         u32 message_length = Message::content().length();
         ::send(socket, reinterpret_cast<char *>(&message_length), sizeof(message_length), 0);
@@ -38,17 +46,7 @@ public:
 
         recv(socket, reinterpret_cast<char *>(&result), sizeof(result), 0);
 
-        if (result != Error::SUCCESS)
-            return false;
-
-
-        i32 message_id;
-        recv(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
-        set_id(message_id);
-
-        std::printf("got id %d\n", id());
-
-        return true;
+        return result == Error::SUCCESS;
     }
 
     bool delete_from_server(i32 socket, i32 connection_id) {

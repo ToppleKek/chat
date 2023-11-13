@@ -154,7 +154,7 @@ static void get_groups(u32 socket) {
 
     u32 size = groups.size();
     send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
-    for (u64 i = 0; i < users.size(); ++i) {
+    for (u64 i = 0; i < groups.size(); ++i) {
         const Group &group = groups.at(i);
 
         // Send group name
@@ -163,13 +163,14 @@ static void get_groups(u32 socket) {
         send(socket, group.name().c_str(), group.name().length(), 0);
 
         // Send number of users in group
-        size = group.usernames().size();
+        auto usernames = group.usernames();
+        size = usernames.size();
         send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
 
         // Send list of all users
-        for (u32 j = 0; j < group.usernames().size(); ++j) {
-            const std::string &username = group.usernames().at(j);
-            size = username.length();
+        for (u32 j = 0; j < usernames.size(); ++j) {
+            const std::string &username = usernames.at(j);
+            size = username.size();
             send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
             send(socket, username.c_str(), username.length(), 0);
         }
@@ -370,8 +371,9 @@ static void set_status(u32 socket) {
 }
 
 static void send_message(i32 socket) {
+    // Receive user id of the sender
     i32 id;
-    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), 4));
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), sizeof(id)));
 
     i32 index = find_user_index_by_id(id);
     if (index == -1) {
@@ -384,43 +386,62 @@ static void send_message(i32 socket) {
     send(socket, buffer, 1, 0);
 
     User *sender = &users.at(index);
-    u32 recipient_count;
-    Util::IchigoVector<Recipient *> recipients;
-    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&recipient_count), sizeof(recipient_count)));
 
-    for (u32 i = 0; i < recipient_count; ++i) {
-        i32 n;
-        u32 recipient_name_size;
-        RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&recipient_name_size), sizeof(recipient_name_size)));
-        RETURN_IF_DROPPED((n = poll_recv(socket, buffer, recipient_name_size)));
-        buffer[n] = 0;
-        recipients.append(&users.at(find_user_index_by_name(buffer)));
-    }
+    // Receive the type of recipient (user or group)
+    u8 recipient_type;
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&recipient_type), sizeof(recipient_type)));
 
+    // Recieve the recipient name
+    i32 message_id;
     i32 n;
+    u32 recipient_name_size;
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&recipient_name_size), sizeof(recipient_name_size)));
+    RETURN_IF_DROPPED((n = poll_recv(socket, buffer, recipient_name_size)));
+    buffer[n] = 0;
+
+    std::string recipient_name = buffer;
+    i32 recipient_index = recipient_type == RECIPIENT_TYPE_USER ? find_user_index_by_name(recipient_name) : find_group_index_by_name(recipient_name);
+
+    // Receive the message content
     u32 message_size;
     RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&message_size), sizeof(message_size)));
     RETURN_IF_DROPPED((n = poll_recv(socket, buffer, message_size)));
     buffer[n] = 0;
 
-    if (n == 0 || n > CHAT_MAX_MESSAGE_LENGTH) {
+    if (recipient_index == -1 || n > CHAT_MAX_MESSAGE_LENGTH) {
         buffer[0] = Error::INVALID_REQUEST;
         send(socket, buffer, 1, 0);
         return;
     }
 
-    i32 message_id = get_next_id();
-    if (recipient_count == 1) {
-        const Message message(buffer, recipients.at(0), sender, message_id);
-        const Journal::NewMessageTransaction transaction(message.sender()->name(), recipients.at(0)->usernames().at(0), RECIPIENT_TYPE_USER, message.content());
+    // Create the message(s)
+    std::string message_content = buffer;
+    message_id = get_next_id();
+
+    if (recipient_type == RECIPIENT_TYPE_USER) {
+        const Message message(message_content, &users.at(recipient_index), sender, message_id);
+        const Journal::NewMessageTransaction transaction(message.sender()->name(), recipient_name, recipient_type, message.content());
         Journal::commit_transaction(&transaction);
         messages.append(message);
-    } else
-        assert(false); // TODO: Group?
+    } else {
+        const Journal::NewMessageTransaction transaction(sender->name(), recipient_name, recipient_type, message_content);
+        Journal::commit_transaction(&transaction);
+
+        Group &group = groups.at(recipient_index);
+        for (u32 i = 0; i < group.usernames().size(); ++i) {
+            ICHIGO_INFO("Group message sending to %s with id %d", group.usernames().at(i).c_str(), message_id);
+            recipient_index = find_user_index_by_name(group.usernames().at(i));
+            assert(recipient_index != -1);
+            const Message message(message_content, &users.at(recipient_index), sender, message_id);
+            messages.append(message);
+
+            // FIXME: This is a pointless commit at the end of the loop. Not a big deal, but just something to note.
+            message_id = get_next_id();
+        }
+    }
 
     buffer[0] = Error::SUCCESS;
     send(socket, buffer, 1, 0);
-    send(socket, reinterpret_cast<char *>(&message_id), sizeof(message_id), 0);
 }
 
 static void delete_message(i32 socket) {
@@ -545,17 +566,22 @@ void ChatServer::init() {
                     i32 recipient_index = find_user_index_by_name(new_message_transaction->recipient());
                     assert(recipient_index != -1);
                     recipient = &users.at(recipient_index);
+                    // The journal is expected to have updated the 'next id' through the 'UPDATE_ID' transaction before adding a new message
+                    messages.append(Message(new_message_transaction->content(), recipient, &users.at(sender_index), next_id));
                 } else if (new_message_transaction->recipient_type() == RECIPIENT_TYPE_GROUP) {
-                    // TODO: Groups
-                    assert(false && "Unimplemented!");
+                    i32 group_index = find_group_index_by_name(new_message_transaction->recipient());
+                    assert(group_index != -1);
+                    Group &group = groups.at(group_index);
+                    for (u32 i = 0; i < group.usernames().size(); ++i) {
+                        i32 user_index = find_user_index_by_name(group.usernames().at(i));
+                        assert(user_index != -1);
+                        ICHIGO_INFO("Sending group message to %s content %s", users.at(user_index).name().c_str(), new_message_transaction->content().c_str());
+                        messages.append(Message(new_message_transaction->content(), &users.at(user_index), &users.at(sender_index), next_id++));
+                    }
                 } else {
                     ICHIGO_ERROR("Invalid recipient type when reading new message from journal");
                     continue;
                 }
-
-                assert(sender_index != -1);
-                // The journal is expected to have updated the 'next id' through the 'UPDATE_ID' transaction before adding a new message
-                messages.append(Message(new_message_transaction->content(), recipient, &users.at(sender_index), next_id));
             } break;
             case Journal::Operation::DELETE_MESSAGE: {
                 Journal::DeleteMessageTransaction *delete_message_transaction = static_cast<Journal::DeleteMessageTransaction *>(transaction);

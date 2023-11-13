@@ -3,9 +3,6 @@
 #include "../common.hpp"
 #include "chat_server.hpp"
 
-#define RECIPIENT_TYPE_USER  0
-#define RECIPIENT_TYPE_GROUP 1
-
 namespace Journal {
     enum class Operation {
         NEW_USER,

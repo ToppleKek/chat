@@ -22,6 +22,9 @@ using f64 = double;
 #define CHAT_MAX_STATUS_LENGTH 32
 #define CHAT_MAX_MESSAGE_LENGTH 256
 
+#define RECIPIENT_TYPE_USER  0
+#define RECIPIENT_TYPE_GROUP 1
+
 enum Opcode {
     SEND_MESSAGE,
     DELETE_MESSAGE,

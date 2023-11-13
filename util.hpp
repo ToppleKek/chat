@@ -22,13 +22,14 @@ public:
     IchigoVector &operator=(const IchigoVector<T> &other) {
         m_capacity = other.m_capacity;
         m_size = other.m_size;
-        if (!m_data) {
-            m_data = new T[m_capacity];
-        }
 
-        for (u64 i = 0; i < m_size; ++i) {
+        if (m_data)
+            delete[] m_data;
+
+        m_data = new T[m_capacity];
+
+        for (u64 i = 0; i < m_size; ++i)
             m_data[i] = other.m_data[i];
-        }
 
         return *this;
     }

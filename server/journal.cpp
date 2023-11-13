@@ -172,22 +172,17 @@ Journal::Transaction *Journal::next_transaction() {
             goto fail;
         }
 
-        if (recipient_type == RECIPIENT_TYPE_USER) {
-            auto recipient = read_quoted_string();
+        auto recipient = read_quoted_string();
 
-            if (!recipient.has_value())
-                goto fail;
+        if (!recipient.has_value())
+            goto fail;
 
-            auto content = read_quoted_string();
+        auto content = read_quoted_string();
 
-            if (!content.has_value())
-                goto fail;
+        if (!content.has_value())
+            goto fail;
 
-            return new NewMessageTransaction(sender.value(), recipient.value(), RECIPIENT_TYPE_USER, content.value());
-        } else if (recipient_type == RECIPIENT_TYPE_GROUP) {
-            // TODO: Group messaging
-            assert(false && "Unimplemented!");
-        }
+        return new NewMessageTransaction(sender.value(), recipient.value(), recipient_type, content.value());
     } else if (std::strcmp(buffer, "DELETE_MESSAGE") == 0) {
         u32 id = read_u32();
 
