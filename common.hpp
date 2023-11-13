@@ -27,10 +27,12 @@ enum Opcode {
     DELETE_MESSAGE,
     GET_MESSAGES,
     GET_USERS,
+    GET_GROUPS,
     SET_STATUS,
     LOGIN,
     LOGOUT,
     REGISTER,
+    REGISTER_GROUP,
     GOODBYE,
     HEARTBEAT,
 };

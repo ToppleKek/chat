@@ -1,6 +1,5 @@
 #include "journal.hpp"
 #include "../util.hpp"
-#include <cstdio>
 #include <optional>
 
 static std::FILE *journal_file   = nullptr;
@@ -71,7 +70,7 @@ void Journal::deinit() {
 }
 
 void Journal::commit_transaction(const Transaction *transaction) {
-    char buffer[1024]{};
+    static char buffer[1024];
 
     if (invalid_file) {
         ICHIGO_ERROR("Invalid journal file provided: the server is operating without a journal!");
@@ -108,6 +107,20 @@ void Journal::commit_transaction(const Transaction *transaction) {
         case Journal::Operation::UPDATE_ID: {
             const UpdateIdTransaction *update_id_transaction = static_cast<const UpdateIdTransaction *>(transaction);
             std::snprintf(buffer, sizeof(buffer), "UPDATE_ID %u", update_id_transaction->id());
+            std::fwrite(buffer, sizeof(char), std::strlen(buffer), journal_file);
+        } break;
+        case Journal::Operation::NEW_GROUP: {
+            const NewGroupTransaction *new_group_transaction = static_cast<const NewGroupTransaction *>(transaction);
+            std::snprintf(buffer, sizeof(buffer), "NEW_GROUP \"%s\" %u ", new_group_transaction->name().c_str(), new_group_transaction->user_count());
+
+            const auto &users = new_group_transaction->users();
+            for (u32 i = 0; i < users.size(); ++i) {
+                std::strncat(buffer, "\"", 1);
+                std::strncat(buffer, users.at(i).c_str(), users.at(i).length());
+                std::strncat(buffer, "\" ", 2);
+            }
+
+            ICHIGO_INFO("New group string: %s", buffer);
             std::fwrite(buffer, sizeof(char), std::strlen(buffer), journal_file);
         } break;
     }
@@ -182,6 +195,29 @@ Journal::Transaction *Journal::next_transaction() {
             goto fail;
 
         return new DeleteMessageTransaction(id);
+    } else if (std::strcmp(buffer, "NEW_GROUP") == 0) {
+        auto name = read_quoted_string();
+
+        if (!name.has_value())
+            goto fail;
+
+        // ICHIGO_INFO("Read group name: %s", )
+
+        u32 user_count = read_u32();
+
+        if (user_count == INVALID_U32)
+            goto fail;
+
+        Util::IchigoVector<std::string> users;
+        for (u32 i = 0; i < user_count; ++i) {
+            auto username = read_quoted_string();
+            if (!username.has_value())
+                goto fail;
+
+            users.append(username.value());
+        }
+
+        return new NewGroupTransaction(name.value(), users);
     }
 
 fail:

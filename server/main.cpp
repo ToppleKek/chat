@@ -10,6 +10,7 @@
 #include "chat_server.hpp"
 #include "server_user.hpp"
 #include "../message.hpp"
+#include "../group.hpp"
 #include "journal.hpp"
 
 #define RETURN_IF_DROPPED(RECV_RET)                \
@@ -24,8 +25,10 @@ static char buffer[4096]{};
 static i32 next_id = 0;
 static Util::IchigoVector<pollfd> poll_connection_fds;
 static Util::IchigoVector<ServerUser> users;
+static Util::IchigoVector<Group> groups;
 static Util::IchigoVector<Message> messages;
 static Util::IchigoVector<u32> connection_heartbeat_times;
+
 
 static i32 poll_recv(u32 socket, char *buffer, u64 buffer_length, u32 timeout = 200) {
     pollfd poll_listen_fd {
@@ -45,6 +48,15 @@ static i32 poll_recv(u32 socket, char *buffer, u64 buffer_length, u32 timeout = 
 static i32 find_user_index_by_name(const std::string &name) {
     for (u32 i = 0; i < users.size(); ++i) {
         if (users.at(i).name() == name)
+            return i;
+    }
+
+    return -1;
+}
+
+static i32 find_group_index_by_name(const std::string &name) {
+    for (u32 i = 0; i < groups.size(); ++i) {
+        if (groups.at(i).name() == name)
             return i;
     }
 
@@ -105,17 +117,62 @@ static void get_users(u32 socket) {
     send(socket, buffer, 1, 0);
 
     u32 size = users.size();
-    send(socket, reinterpret_cast<char *>(&size), 4, 0);
+    send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
     for (u64 i = 0; i < users.size(); ++i) {
         User &user = users.at(i);
 
         size = user.name().length();
-        send(socket, reinterpret_cast<char *>(&size), 4, 0);
+        send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
         send(socket, user.name().c_str(), user.name().length(), 0);
 
         size = user.status().length();
-        send(socket, reinterpret_cast<char *>(&size), 4, 0);
+        send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
         send(socket, user.status().c_str(), user.status().length(), 0);
+    }
+
+    buffer[0] = Error::SUCCESS;
+    send(socket, buffer, 1, 0);
+}
+
+static void get_groups(u32 socket) {
+    i32 id;
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&id), sizeof(id)));
+
+    i32 user_index = find_user_index_by_id(id);
+    if (user_index == -1) {
+        buffer[0] = Error::INVALID_REQUEST;
+        send(socket, buffer, 1, 0);
+        return;
+    } else if (!users.at(user_index).is_logged_in()) {
+        buffer[0] = Error::UNAUTHORIZED;
+        send(socket, buffer, 1, 0);
+        return;
+    }
+
+    buffer[0] = Error::SUCCESS;
+    send(socket, buffer, 1, 0);
+
+    u32 size = groups.size();
+    send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
+    for (u64 i = 0; i < users.size(); ++i) {
+        const Group &group = groups.at(i);
+
+        // Send group name
+        size = group.name().length();
+        send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
+        send(socket, group.name().c_str(), group.name().length(), 0);
+
+        // Send number of users in group
+        size = group.usernames().size();
+        send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
+
+        // Send list of all users
+        for (u32 j = 0; j < group.usernames().size(); ++j) {
+            const std::string &username = group.usernames().at(j);
+            size = username.length();
+            send(socket, reinterpret_cast<char *>(&size), sizeof(size), 0);
+            send(socket, username.c_str(), username.length(), 0);
+        }
     }
 
     buffer[0] = Error::SUCCESS;
@@ -140,6 +197,57 @@ static void register_user(u32 socket) {
     users.append(ServerUser(buffer));
     ICHIGO_INFO("Registered user: %s", buffer);
     buffer[0] = Error::SUCCESS;
+    send(socket, buffer, 1, 0);
+}
+
+static void register_group(u32 socket) {
+    u32 length;
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&length), sizeof(length)));
+    i32 n = poll_recv(socket, buffer, length);
+    RETURN_IF_DROPPED(n);
+
+    buffer[n] = 0;
+
+    if (find_group_index_by_name(buffer) != -1) {
+        buffer[0] = Error::INVALID_REQUEST;
+        send(socket, buffer, 1, 0);
+        return;
+    }
+
+    std::string group_name = buffer;
+    ICHIGO_INFO("New group: %s", group_name.c_str());
+
+    buffer[0] = Error::SUCCESS;
+    send(socket, buffer, 1, 0);
+
+    Util::IchigoVector<std::string> group_users;
+    u32 user_count;
+    RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&user_count), sizeof(user_count)));
+    ICHIGO_INFO("User count: %u", user_count);
+
+    bool failed = false;
+    for (u32 i = 0; i < user_count; ++i) {
+        RETURN_IF_DROPPED(poll_recv(socket, reinterpret_cast<char *>(&length), sizeof(length)));
+        RETURN_IF_DROPPED(poll_recv(socket, buffer, length));
+        buffer[length] = 0;
+
+        ICHIGO_INFO("User: %s", buffer);
+
+        i32 user_index = find_user_index_by_name(buffer);
+
+        if (user_index == -1)
+            failed = true;
+        else
+            group_users.append(buffer);
+    }
+
+    if (!failed) {
+        const Journal::NewGroupTransaction transaction(group_name, group_users);
+        Journal::commit_transaction(&transaction);
+    }
+
+    groups.append(Group(group_name, std::move(group_users)));
+    buffer[0] = failed ? Error::INVALID_REQUEST : Error::SUCCESS;
     send(socket, buffer, 1, 0);
 }
 
@@ -461,6 +569,11 @@ void ChatServer::init() {
                 ICHIGO_INFO("Updating next id from journal: %u", update_id_transaction->id());
                 next_id = update_id_transaction->id();
             } break;
+            case Journal::Operation::NEW_GROUP: {
+                Journal::NewGroupTransaction *new_group_transaction = static_cast<Journal::NewGroupTransaction *>(transaction);
+                ICHIGO_INFO("New group read from journal: %s users: %u", new_group_transaction->name().c_str(), new_group_transaction->user_count());
+                groups.append(Group(new_group_transaction->name(), new_group_transaction->users()));
+            } break;
             default: {
                 ICHIGO_ERROR("Unimplemented");
             }
@@ -525,16 +638,18 @@ void ChatServer::init() {
                     ICHIGO_INFO("opcode=%d", opcode);
 
                     switch (opcode) {
-                        case   SEND_MESSAGE: send_message(connection_fd);   break;
-                        case DELETE_MESSAGE: delete_message(connection_fd); break;
-                        case   GET_MESSAGES: get_messages(connection_fd);   break;
-                        case       REGISTER: register_user(connection_fd);  break;
-                        case          LOGIN: login(connection_fd);          break;
-                        case         LOGOUT: logout(connection_fd);         break;
-                        case      GET_USERS: get_users(connection_fd);      break;
-                        case     SET_STATUS: set_status(connection_fd);     break;
-                        case        GOODBYE: goodbye(connection_fd);        break;
-                        case      HEARTBEAT: heartbeat(connection_fd);      break;
+                        case Opcode::SEND_MESSAGE:   send_message(connection_fd);   break;
+                        case Opcode::DELETE_MESSAGE: delete_message(connection_fd); break;
+                        case Opcode::GET_MESSAGES:   get_messages(connection_fd);   break;
+                        case Opcode::REGISTER:       register_user(connection_fd);  break;
+                        case Opcode::REGISTER_GROUP: register_group(connection_fd); break;
+                        case Opcode::LOGIN:          login(connection_fd);          break;
+                        case Opcode::LOGOUT:         logout(connection_fd);         break;
+                        case Opcode::GET_USERS:      get_users(connection_fd);      break;
+                        case Opcode::GET_GROUPS:     get_groups(connection_fd);     break;
+                        case Opcode::SET_STATUS:     set_status(connection_fd);     break;
+                        case Opcode::GOODBYE:        goodbye(connection_fd);        break;
+                        case Opcode::HEARTBEAT:      heartbeat(connection_fd);      break;
                     }
                 }
             }

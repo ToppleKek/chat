@@ -4,6 +4,7 @@
 #include <mutex>
 
 Util::IchigoVector<ClientUser> ServerConnection::cached_users;
+Util::IchigoVector<Group> ServerConnection::cached_groups;
 Util::IchigoVector<ClientMessage> ServerConnection::cached_inbox;
 Util::IchigoVector<ClientMessage> ServerConnection::cached_outbox;
 ClientUser ServerConnection::logged_in_user("");
@@ -89,6 +90,34 @@ bool ServerConnection::register_user(const std::string &username) {
     i8 result;
     recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
 
+    return result == Error::SUCCESS;
+}
+
+bool ServerConnection::register_group(const std::string &name, const Util::IchigoVector<std::string> &usernames) {
+    std::lock_guard<std::mutex> guard(socket_access_mutex);
+
+    buffer[0] = Opcode::REGISTER_GROUP;
+    send(socket_fd, buffer, 1, 0);
+    u32 length = name.length();
+    send(socket_fd, reinterpret_cast<char *>(&length), sizeof(length), 0);
+    send(socket_fd, name.c_str(), name.length(), 0);
+
+    i8 result;
+    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
+
+    if (result != Error::SUCCESS)
+        return false;
+
+    u32 count = usernames.size();
+    send(socket_fd, reinterpret_cast<char *>(&count), sizeof(count), 0);
+
+    for (u32 i = 0; i < count; ++i) {
+        length = usernames.at(i).length();
+        send(socket_fd, reinterpret_cast<char *>(&length), sizeof(length), 0);
+        send(socket_fd, usernames.at(i).c_str(), usernames.at(i).length(), 0);
+    }
+
+    recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
     return result == Error::SUCCESS;
 }
 
@@ -187,6 +216,51 @@ i32 ServerConnection::refresh() {
         }
 
         std::printf("Received all users.\n");
+
+        // TODO: Report this status?
+        recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
+    }
+
+    {
+        buffer[0] = Opcode::GET_GROUPS;
+        send(socket_fd, buffer, 1, 0);
+
+        i32 id = ServerConnection::logged_in_user.id();
+        send(socket_fd, reinterpret_cast<char *>(&id), 4, 0);
+
+        i8 result;
+        recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);
+
+        // TODO: Report this failure?
+        if (result != Error::SUCCESS) {
+            return 0;
+        }
+
+        u32 group_count;
+        recv(socket_fd, reinterpret_cast<char *>(&group_count), sizeof(group_count), 0);
+        std::printf("Number of groups: %u\n", group_count);
+        cached_groups.clear();
+
+        for (u32 i = 0; i < group_count; ++i) {
+            u32 length;
+            recv(socket_fd, reinterpret_cast<char *>(&length), sizeof(length), 0);
+            recv(socket_fd, buffer, length, 0);
+            buffer[length] = 0;
+
+            std::string group_name = buffer;
+            u32 group_user_count;
+            recv(socket_fd, reinterpret_cast<char *>(&group_user_count), sizeof(group_user_count), 0);
+            Util::IchigoVector<std::string> usernames(group_user_count);
+
+            for (u32 j = 0; j < group_user_count; ++j) {
+                recv(socket_fd, reinterpret_cast<char *>(&length), sizeof(length), 0);
+                recv(socket_fd, buffer, length, 0);
+                buffer[length] = 0;
+                usernames.append(buffer);
+            }
+
+            cached_groups.append(Group(group_name, std::move(usernames)));
+        }
 
         // TODO: Report this status?
         recv(socket_fd, reinterpret_cast<char *>(&result), 1, 0);

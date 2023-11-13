@@ -276,10 +276,11 @@ void ChatClient::do_frame(float dpi_scale) {
     static char text_input_buffer[CHAT_MAX_MESSAGE_LENGTH];
     static ClientUser *message_recipient = nullptr;
     static bool modal_request_failed = false;
+    static Util::IchigoVector<bool> check_boxes;
 
     if (ServerConnection::logged_in_user.is_logged_in()) {
         // ** Message and user tables **
-        ImGui::BeginChild("message_list", ImVec2(ImGui::GetContentRegionAvail().x * 0.8f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
+        ImGui::BeginChild("message_list", ImVec2(ImGui::GetContentRegionAvail().x * 0.8f, ImGui::GetContentRegionAvail().y * 0.8f));
 
         if (ImGui::BeginTabBar("main_tab_bar", ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) {
             if (ImGui::BeginTabItem("Inbox")) {
@@ -354,8 +355,8 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::EndChild();
         ImGui::SameLine();
 
-        ImGui::BeginChild("user_list", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
-
+        ImGui::BeginChild("user_group_container",  ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y * 0.8));
+        ImGui::BeginChild("user_list", ImVec2(0, ImGui::GetContentRegionAvail().y * 0.5f));
         if (ImGui::BeginTable("user_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
             ImGui::TableSetupColumn("User");
             ImGui::TableSetupColumn("Status");
@@ -416,7 +417,65 @@ void ChatClient::do_frame(float dpi_scale) {
         }
 
         ImGui::EndChild();
+        ImGui::BeginChild("group_list", ImVec2(0, ImGui::GetContentRegionAvail().y));
+        if (ImGui::BeginTable("group_table", 1, ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
+            ImGui::TableSetupColumn("Group");
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableHeadersRow();
 
+            for (u32 i = 0; i < ServerConnection::cached_groups.size(); ++i) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+
+                if (ImGui::Selectable(ServerConnection::cached_groups.at(i).name().c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+                    modal_request_failed = false;
+                    std::memset(text_input_buffer, 0, ARRAY_LEN(text_input_buffer));
+                    // message_recipient = &ServerConnection::cached_users.at(i);
+                    // ImGui::OpenPopup("Send message");
+                }
+            }
+
+
+            if (ImGui::BeginPopupModal("Send message", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (modal_request_failed)
+                    ImGui::Text("Send failed.");
+
+                if (message_recipient) {
+                    ImGui::Text("New message to %s", message_recipient->name().c_str());
+                    ImGui::InputText("Content", text_input_buffer, ARRAY_LEN(text_input_buffer));
+                    ImGui::Separator();
+
+                    if (ImGui::Button("Send", ImVec2(120, 0))) {
+                        if (std::strlen(text_input_buffer) == 0) {
+                            modal_request_failed = true;
+                        } else {
+                            ClientMessage message(text_input_buffer, message_recipient, &ServerConnection::logged_in_user);
+                            if (!ServerConnection::send_message(message)) {
+                                modal_request_failed = true;
+                            } else {
+                                ServerConnection::cached_outbox.append(message);
+                                ImGui::CloseCurrentPopup();
+                                refresh();
+                            }
+                        }
+                    }
+
+                    ImGui::SameLine();
+
+                    if (ImGui::Button("Cancel", ImVec2(120, 0)))
+                        ImGui::CloseCurrentPopup();
+
+                }
+
+                ImGui::EndPopup();
+            }
+
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
+        ImGui::EndChild();
+
+        ImGui::BeginChild("bottom_interaction_bar", ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y));
         // ** Bottom interaction buttons **
         if (ImGui::Button("Refresh")) {
             refresh();
@@ -429,6 +488,23 @@ void ChatClient::do_frame(float dpi_scale) {
             modal_request_failed = false;
             std::memset(text_input_buffer, 0, CHAT_MAX_STATUS_LENGTH + 1);
             ImGui::OpenPopup("Set status");
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("New group...")) {
+            if (check_boxes.size() != ServerConnection::cached_users.size()) {
+                ICHIGO_INFO("Resizing checkbox vector");
+                check_boxes.resize(ServerConnection::cached_users.size());
+            }
+
+            check_boxes.clear();
+            for (u32 i = 0; i < ServerConnection::cached_users.size(); ++i)
+                check_boxes.append(false);
+
+            modal_request_failed = false;
+            std::memset(text_input_buffer, 0, ARRAY_LEN(text_input_buffer));
+            ImGui::OpenPopup("New group");
         }
 
         ImGui::SameLine();
@@ -454,6 +530,93 @@ void ChatClient::do_frame(float dpi_scale) {
             ImGui::OpenPopup("New message(s)");
         }
 
+        // ** Popup rendering **
+        if (ImGui::BeginPopupModal("Set status", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (modal_request_failed)
+                ImGui::Text("Failed to update status.");
+
+            ImGui::InputText("New status", text_input_buffer, CHAT_MAX_STATUS_LENGTH + 1);
+            ImGui::Separator();
+
+            if (ImGui::Button("Update", ImVec2(120, 0))) {
+                if (std::strlen(text_input_buffer) == 0) {
+                    modal_request_failed = true;
+                } else {
+                    if (!ServerConnection::set_status_of_logged_in_user(text_input_buffer)) {
+                        modal_request_failed = true;
+                    } else {
+                        ImGui::CloseCurrentPopup();
+                        refresh();
+                    }
+                }
+            }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel", ImVec2(120, 0)))
+                ImGui::CloseCurrentPopup();
+
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("New group", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (modal_request_failed)
+                ImGui::Text("Failed to create group.");
+
+            ImGui::InputText("Group name", text_input_buffer, ARRAY_LEN(text_input_buffer));
+            ImGui::Separator();
+
+            ImGui::Text("Including the following users:");
+
+            for (u32 i = 0; i < ServerConnection::cached_users.size(); ++i)
+                ImGui::Checkbox(ServerConnection::cached_users.at(i).name().c_str(), &check_boxes.at(i));
+
+            ImGui::Separator();
+
+            if (ImGui::Button("Create", ImVec2(120, 0))) {
+                if (std::strlen(text_input_buffer) == 0) {
+                    modal_request_failed = true;
+                } else {
+                    Util::IchigoVector<std::string> usernames;
+                    for (u32 i = 0; i < check_boxes.size(); ++i) {
+                        ICHIGO_INFO("Check box %u: %d", i, check_boxes.at(i));
+                        if (check_boxes.at(i)) {
+                            usernames.append(ServerConnection::cached_users.at(i).name());
+                            ICHIGO_INFO("Appending user");
+                        }
+                    }
+
+                    if (usernames.size() == 0 || !ServerConnection::register_group(text_input_buffer, usernames)) {
+                        modal_request_failed = true;
+                    } else {
+                        ImGui::CloseCurrentPopup();
+                        refresh();
+                    }
+                }
+            }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel", ImVec2(120, 0)))
+                ImGui::CloseCurrentPopup();
+
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("New message(s)", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("You have %u new message(s)", new_message_count);
+            ImGui::Separator();
+
+            if (ImGui::Button("Ok", ImVec2(120, 0))) {
+                new_message_count = 0;
+                must_show_new_message_popup = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::EndChild();
     } else {
         if (ImGui::Button("Login")) {
             modal_request_failed = false;
@@ -468,102 +631,61 @@ void ChatClient::do_frame(float dpi_scale) {
             std::memset(text_input_buffer, 0, ARRAY_LEN(text_input_buffer));
             ImGui::OpenPopup("Register");
         }
-    }
 
-    // ** Popup rendering **
-    if (ImGui::BeginPopupModal("Register", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (modal_request_failed)
-            ImGui::Text("Registration failed.");
+        // ** Popup rendering for pre-login UI **
+        if (ImGui::BeginPopupModal("Register", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (modal_request_failed)
+                ImGui::Text("Registration failed.");
 
-        ImGui::InputText("Name", text_input_buffer, ARRAY_LEN(text_input_buffer));
-        ImGui::Separator();
+            ImGui::InputText("Name", text_input_buffer, ARRAY_LEN(text_input_buffer));
+            ImGui::Separator();
 
-        if (ImGui::Button("Register", ImVec2(120, 0))) {
-            if (std::strlen(text_input_buffer) == 0) {
-                modal_request_failed = true;
-            } else {
-                if (!ServerConnection::register_user(text_input_buffer))
-                    modal_request_failed = true;
-                else
-                    ImGui::CloseCurrentPopup();
-            }
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(120, 0)))
-            ImGui::CloseCurrentPopup();
-
-        ImGui::EndPopup();
-    }
-
-    if (ImGui::BeginPopupModal("Login", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (modal_request_failed)
-            ImGui::Text("Login failed.");
-
-        ImGui::InputText("Name", text_input_buffer, ARRAY_LEN(text_input_buffer));
-        ImGui::Separator();
-
-        if (ImGui::Button("Login", ImVec2(120, 0))) {
-            if (std::strlen(text_input_buffer) == 0) {
-                modal_request_failed = true;
-            } else {
-                if (!ServerConnection::login(text_input_buffer)) {
+            if (ImGui::Button("Register", ImVec2(120, 0))) {
+                if (std::strlen(text_input_buffer) == 0) {
                     modal_request_failed = true;
                 } else {
-                    ImGui::CloseCurrentPopup();
-                    refresh();
+                    if (!ServerConnection::register_user(text_input_buffer))
+                        modal_request_failed = true;
+                    else
+                        ImGui::CloseCurrentPopup();
                 }
             }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel", ImVec2(120, 0)))
+                ImGui::CloseCurrentPopup();
+
+            ImGui::EndPopup();
         }
 
-        ImGui::SameLine();
+        if (ImGui::BeginPopupModal("Login", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (modal_request_failed)
+                ImGui::Text("Login failed.");
 
-        if (ImGui::Button("Cancel", ImVec2(120, 0)))
-            ImGui::CloseCurrentPopup();
+            ImGui::InputText("Name", text_input_buffer, ARRAY_LEN(text_input_buffer));
+            ImGui::Separator();
 
-        ImGui::EndPopup();
-    }
-
-    if (ImGui::BeginPopupModal("Set status", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (modal_request_failed)
-            ImGui::Text("Failed to update status.");
-
-        ImGui::InputText("New status", text_input_buffer, CHAT_MAX_STATUS_LENGTH + 1);
-        ImGui::Separator();
-
-        if (ImGui::Button("Update", ImVec2(120, 0))) {
-            if (std::strlen(text_input_buffer) == 0) {
-                modal_request_failed = true;
-            } else {
-                if (!ServerConnection::set_status_of_logged_in_user(text_input_buffer)) {
+            if (ImGui::Button("Login", ImVec2(120, 0))) {
+                if (std::strlen(text_input_buffer) == 0) {
                     modal_request_failed = true;
                 } else {
-                    ImGui::CloseCurrentPopup();
-                    refresh();
+                    if (!ServerConnection::login(text_input_buffer)) {
+                        modal_request_failed = true;
+                    } else {
+                        ImGui::CloseCurrentPopup();
+                        refresh();
+                    }
                 }
             }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancel", ImVec2(120, 0)))
+                ImGui::CloseCurrentPopup();
+
+            ImGui::EndPopup();
         }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(120, 0)))
-            ImGui::CloseCurrentPopup();
-
-        ImGui::EndPopup();
-    }
-
-    if (ImGui::BeginPopupModal("New message(s)", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("You have %u new message(s)", new_message_count);
-        ImGui::Separator();
-
-        if (ImGui::Button("Ok", ImVec2(120, 0))) {
-            new_message_count = 0;
-            must_show_new_message_popup = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
     }
 
     ImGui::End();

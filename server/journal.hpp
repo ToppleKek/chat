@@ -12,6 +12,7 @@ namespace Journal {
         NEW_MESSAGE,
         DELETE_MESSAGE,
         UPDATE_ID,
+        NEW_GROUP,
     };
 
     struct Transaction {
@@ -41,6 +42,18 @@ namespace Journal {
         std::string m_recipient;
         u32 m_recipient_type;
         std::string m_content;
+    };
+
+    class NewGroupTransaction : public Transaction {
+    public:
+        explicit NewGroupTransaction(const std::string &group_name, Util::IchigoVector<std::string> group_users) : m_group_name(group_name), m_group_users(group_users) {}
+        Operation operation() const override { return Operation::NEW_GROUP; }
+        const std::string &name() const { return m_group_name; }
+        u32 user_count() const { return m_group_users.size(); }
+        const Util::IchigoVector<std::string> &users() const { return m_group_users; }
+    private:
+        std::string m_group_name;
+        Util::IchigoVector<std::string> m_group_users;
     };
 
     class DeleteMessageTransaction : public Transaction {

@@ -22,7 +22,15 @@ public:
     IchigoVector &operator=(const IchigoVector<T> &other) {
         m_capacity = other.m_capacity;
         m_size = other.m_size;
-        std::memcpy(m_data, other.m_data, m_size * sizeof(T));
+        if (!m_data) {
+            m_data = new T[m_capacity];
+        }
+
+        for (u64 i = 0; i < m_size; ++i) {
+            m_data[i] = other.m_data[i];
+        }
+
+        return *this;
     }
     ~IchigoVector() { if (m_data) delete[] m_data; }
 
@@ -93,9 +101,9 @@ public:
 
 
 private:
-    u64 m_capacity;
+    u64 m_capacity = 0;
     u64 m_size = 0;
-    T *m_data;
+    T *m_data = nullptr;
 
     void expand() {
         T *new_data = new T[m_capacity *= 2];
