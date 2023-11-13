@@ -1,3 +1,10 @@
+/*
+    Vulkan render backend module implementation.
+
+    Author: Braeden Hong
+      Date: October 30, 2023
+*/
+
 #include "vulkan.hpp"
 
 #ifdef ICHIGO_VULKAN_DEBUG

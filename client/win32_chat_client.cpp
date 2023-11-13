@@ -1,3 +1,11 @@
+/*
+    Chat client platform layer module implementation for win32.
+
+    Author: Braeden Hong
+      Date: October 30, 2023
+*/
+
+
 #define _CRT_SECURE_NO_WARNINGS
 #include "../common.hpp"
 #include <cstdio>

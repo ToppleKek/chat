@@ -1,3 +1,10 @@
+/*
+Server connection module implementation.
+
+Author: Braeden Hong
+  Date: November 5, 2023 - November 12 2023
+*/
+
 #include "server_connection.hpp"
 #include "chat_client.hpp"
 #include <thread>
@@ -9,12 +16,22 @@ Util::IchigoVector<ClientMessage> ServerConnection::cached_inbox;
 Util::IchigoVector<ClientMessage> ServerConnection::cached_outbox;
 ClientUser ServerConnection::logged_in_user("");
 
+// The socket file descriptor of the open connection
 static u32 socket_fd = INVALID_SOCKET;
+// Static receiving buffer.
 static char buffer[4096]{};
+// Heartbeat thread. Keeps the connection alive even if the UI is blocking.
 static std::thread heartbeat_thread;
+// This mutex is locked before the heartbeat thread enters. Unlock to wake heartbeat thread so it can kill itself.
 static std::timed_mutex kill_heartbeat_mutex;
+// Guard socket access between main thread and heartbeat thread.
 static std::mutex socket_access_mutex;
 
+/*
+    Find the index of a user by name.
+    Parameter 'name': The name of the user to find.
+    Returns the index of the user or -1 if not found.
+*/
 static i32 find_user_index_by_name(const std::string &name) {
     for (u32 i = 0; i < ServerConnection::cached_users.size(); ++i) {
         if (ServerConnection::cached_users.at(i).name() == name)
@@ -24,8 +41,17 @@ static i32 find_user_index_by_name(const std::string &name) {
     return -1;
 }
 
+/*
+    The heartbeat thread entry procedure.
+
+    The fow between the client and server is as follows:
+    1. Send HEARTBEAT opcode.
+    2. Receive a result. Assert that it is Error::SUCCESS.
+*/
 static void thread_proc() {
     for (;;) {
+        // Sleep for at most 10 seconds. If the mutex is ever actually unlocked, it is a signal that the application is shutting down.
+        // This means that the thread should exit.
         if (kill_heartbeat_mutex.try_lock_for(std::chrono::seconds(10)))
             break;
 

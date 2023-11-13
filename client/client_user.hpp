@@ -1,3 +1,11 @@
+/*
+    ClientUser class. A specialization of User that implements client specific functions.
+    Inherits from User. Implements the Recipient interface.
+
+    Author: Braeden Hong
+      Date: October 30, 2023 - November 12 2023
+*/
+
 #pragma once
 #include "chat_client.hpp"
 #include "../recipient.hpp"
@@ -14,6 +22,17 @@ public:
         return ret;
     }
 
+    /*
+        Register a new user with the server.
+
+        The flow between the client and server is as follows:
+        1. Send REGISTER_GROUP opcode.
+        2. Send the name of the group to register as a string.
+        3. Receive a status.
+
+        Parameter 'username': The username of the new user
+        Returns whether or not the registration was successful
+    */
     bool set_status(i32 socket, const std::string &status) {
         if (status.length() < 1)
             return false;

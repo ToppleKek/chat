@@ -1,3 +1,11 @@
+/*
+    ClientMessage. A specialization of Message that implements client specific functions.
+    Inherits from Message.
+
+    Author: Braeden Hong
+      Date: October 30, 2023 - November 12 2023
+*/
+
 #pragma once
 #include "chat_client.hpp"
 #include "../message.hpp"

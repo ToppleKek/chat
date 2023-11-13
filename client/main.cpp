@@ -1,21 +1,19 @@
 /*
-Main client UI module.
+Main client UI module. Handles UI state, basic UI operations, and frame rendering.
 
 Globals:
 scale: The current DPI scale of the application
 initial_style: The original Dear ImGui style that the application was initialized with.
 font_config: The font config for Dear ImGui
-logged_in_user: The ClientUser of the currently logged in user
-cached_users: A vector of users stored after the last heartbeat to the server
-cached_inbox: A vector of messages that have the logged_in_user in the recipient field stored after the last heartbeat to the server
-cached_outbox: A vector of all messages sent during this client session
 last_heartbeat_time: The UNIX timestamp in seconds of the last heartbeat
+new_message_count: The number of messages that are new since the last popup was shown
+must_show_new_message_popup: Whether or not the new message popup must be displayed on the next frame
 current_frame: The current frame that is being processed (0 to ICHIGO_MAX_FRAMES_IN_FLIGHT - 1)
 ChatClient::vk_context: The vulkan context for the application. Shared with the platform layer via the ChatClient namespace
 ChatClient::must_rebuild_swapchain: Boolean stating whether or not the vulkan swapchain is out of date/suboptimal. Shared with the platform layer via the ChatClient namespace
 
 Author: Braeden Hong
-  Date: October 30, 2023
+  Date: October 30, 2023 - November 12 2023
 */
 
 #include <chrono>
@@ -92,6 +90,9 @@ static const VkVertexInputAttributeDescription VERTEX_ATTRIBUTE_DESCRIPTIONS[] =
  {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, color)}
 };
 
+/*
+    Refresh the UI, pulling latest message, user, and group data from the server
+*/
 static void refresh() {
     i32 delta = ServerConnection::refresh();
 
@@ -101,6 +102,10 @@ static void refresh() {
     }
 }
 
+/*
+    Export messages to the CSV file specified by 'filename'
+    Parameter 'filename': The path to the CSV file to export to
+*/
 static void export_messages(const std::string &filename) {
     std::stringstream ss;
     ss << "Sender,Content\n";
@@ -112,6 +117,10 @@ static void export_messages(const std::string &filename) {
     std::fclose(output_file);
 }
 
+/*
+    Present one frame. Begin the vulkan render pass, fill command buffers with Dear ImGui draw data,
+    and submit the queue for presentation.
+*/
 static void frame_render() {
     ImGui::Render();
     auto imgui_draw_data = ImGui::GetDrawData();
@@ -199,7 +208,12 @@ static void frame_render() {
     current_frame = (current_frame + 1) % ICHIGO_MAX_FRAMES_IN_FLIGHT;
 }
 
+/*
+    Process one frame. Get input, draw UI, etc.
+    Parameter 'dpi_scale': The DPI scale of the application on this frame
+*/
 void ChatClient::do_frame(float dpi_scale) {
+    // If the swapchain becomes out of date or suboptimal (window resizes for instance) we must rebuild the swapchain
     if (ChatClient::must_rebuild_swapchain) {
         std::printf("Rebuilding swapchain\n");
         u64 start = __rdtsc();
@@ -209,9 +223,11 @@ void ChatClient::do_frame(float dpi_scale) {
         ChatClient::must_rebuild_swapchain = false;
     }
 
+    // If the current scale is different from the scale this frame, we must scale the UI
     if (dpi_scale != scale) {
         std::printf("scaling to scale=%f\n", dpi_scale);
         auto io = ImGui::GetIO();
+        // Scale font by reuploading a scaled version to the GPU
         {
             io.Fonts->Clear();
             io.Fonts->AddFontFromMemoryTTF((void *) noto_font, noto_font_len, static_cast<i32>(18 * dpi_scale), &font_config, io.Fonts->GetGlyphRangesJapanese());
@@ -256,11 +272,13 @@ void ChatClient::do_frame(float dpi_scale) {
 
             vkFreeCommandBuffers(ChatClient::vk_context.logical_device, command_pool, 1, &command_buffer);
         }
+        // Scale all Dear ImGui sizes based on the inital style
         ImGui::HACK_SetStyle(initial_style);
         ImGui::GetStyle().ScaleAllSizes(dpi_scale);
         scale = dpi_scale;
     }
 
+    // Refresh every 10 seconds
     u32 now = time(nullptr);
     if (now - last_heartbeat_time >= 10) {
         refresh();
@@ -273,16 +291,27 @@ void ChatClient::do_frame(float dpi_scale) {
     ImGui::SetNextWindowPos({0, 0});
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
     ImGui::Begin("main_window", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
+
+    /*
+        Static UI state variables.
+        text_input_buffer: A static buffer for all UI text input boxes since only one is ever visible at the same time
+        message_recipient: The User a message is being sent to when the send message modal is open
+        group_message_recipient: The Group a message is being sent to when the send group message modal is open
+        modal_request_failed: Set if the last modal request failed.
+        check_boxes: A vector of checkbox state.
+    */
     static char text_input_buffer[CHAT_MAX_MESSAGE_LENGTH];
     static ClientUser *message_recipient = nullptr;
     static Group *group_message_recipient = nullptr;
     static bool modal_request_failed = false;
     static Util::IchigoVector<bool> check_boxes;
 
+    // UI Shown when the user is logged in
     if (ServerConnection::logged_in_user.is_logged_in()) {
         // ** Message and user tables **
         ImGui::BeginChild("message_list", ImVec2(ImGui::GetContentRegionAvail().x * 0.8f, ImGui::GetContentRegionAvail().y * 0.8f));
 
+        // ** Inbox/Outbox tabs **
         if (ImGui::BeginTabBar("main_tab_bar", ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) {
             if (ImGui::BeginTabItem("Inbox")) {
                 if (ImGui::BeginTable("message_table", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
@@ -300,6 +329,7 @@ void ChatClient::do_frame(float dpi_scale) {
                         ImGui::Text("%s", ServerConnection::cached_inbox.at(i).content().c_str());
                         ImGui::TableNextColumn();
 
+                        // **Hack** check if the current row is hovered
                         ImGuiTable *table = ImGui::GetCurrentTable();
                         ImRect row_rect(
                             table->WorkRect.Min.x,
@@ -309,6 +339,7 @@ void ChatClient::do_frame(float dpi_scale) {
                         );
                         row_rect.ClipWith(table->BgClipRect);
 
+                        // Only show the delete message button if the row is being hovered
                         bool hovered = ImGui::IsMouseHoveringRect(row_rect.Min, row_rect.Max, false);
                         ImGui::PushID(i);
                         if (hovered && ImGui::SmallButton("Delete")) {
@@ -334,13 +365,13 @@ void ChatClient::do_frame(float dpi_scale) {
                     for (u32 i = 0; i < ServerConnection::cached_outbox.size(); ++i) {
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
+                        // FIXME: Weird copy constructor issue when this is called multiple times...
                         auto usernames = ServerConnection::cached_outbox.at(i).recipient()->usernames();
-                        std::printf("USERNAME SIZES: %u\n", usernames.size());
                         std::stringstream ss;
-                        for (u32 j = 0; j < usernames.size(); ++j) {
-                            std::printf("!!!USERNAME: %s\n", usernames.at(j).c_str());
+
+                        // If the message was sent to a group, show all the users in a comma separated list
+                        for (u32 j = 0; j < usernames.size(); ++j)
                             ss << usernames.at(j) << (j == usernames.size() - 1 ? "" : ", ");
-                        }
 
                         ImGui::Text("%s", ss.str().c_str());
                         ImGui::TableNextColumn();
@@ -359,6 +390,7 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::EndChild();
         ImGui::SameLine();
 
+        // ** User/group list sidebar **
         ImGui::BeginChild("user_group_container",  ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y * 0.8));
         ImGui::BeginChild("user_list", ImVec2(0, ImGui::GetContentRegionAvail().y * 0.5f));
         if (ImGui::BeginTable("user_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
@@ -383,6 +415,7 @@ void ChatClient::do_frame(float dpi_scale) {
             }
 
 
+            // ** Popup rendering for this child (user_list) **
             if (ImGui::BeginPopupModal("Send message", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                 if (modal_request_failed)
                     ImGui::Text("Send failed.");
@@ -440,6 +473,7 @@ void ChatClient::do_frame(float dpi_scale) {
             }
 
 
+            // ** Popup rendering for this child (group_list) **
             if (ImGui::BeginPopupModal("Send group message", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                 if (modal_request_failed)
                     ImGui::Text("Send failed.");
@@ -479,8 +513,8 @@ void ChatClient::do_frame(float dpi_scale) {
         ImGui::EndChild();
         ImGui::EndChild();
 
-        ImGui::BeginChild("bottom_interaction_bar", ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y));
         // ** Bottom interaction buttons **
+        ImGui::BeginChild("bottom_interaction_bar", ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y));
         if (ImGui::Button("Refresh")) {
             refresh();
             last_heartbeat_time = now;
@@ -699,6 +733,7 @@ void ChatClient::do_frame(float dpi_scale) {
         frame_render();
 }
 
+// Initialization for the UI module
 void ChatClient::init() {
     font_config.FontDataOwnedByAtlas = false;
     font_config.OversampleH = 2;
@@ -1026,15 +1061,21 @@ found_present_mode:
         // io.Fonts->Build();
     }
 
+    // Initialize winsock2
     WSADATA wsa_data;
     i32 result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
     if (result != NO_ERROR) {
         std::printf("Failed to init wsa\n");
+        std::exit(1);
     }
 
     ServerConnection::connect_to_server();
 }
 
+/*
+    Cleanup done before closing the application
+*/
 void ChatClient::deinit() {
+    // Logout, say goodbye, and close the connection to the server
     ServerConnection::deinit();
 }

@@ -1,3 +1,10 @@
+/*
+    Vulkan render backend module.
+
+    Author: Braeden Hong
+      Date: October 30, 2023
+*/
+
 #pragma once
 
 #include <vulkan/vulkan.h>
@@ -38,7 +45,6 @@ struct Context {
     VkSemaphore render_complete_semaphores[ICHIGO_MAX_FRAMES_IN_FLIGHT];
     VkFence fences[ICHIGO_MAX_FRAMES_IN_FLIGHT];
     VkExtent2D extent;
-    // ImGui_ImplVulkanH_Window imgui_window_data;  // TODO: replace this with our own swapchain creation code
     u32 queue_family_index;
 
     void init(const char **extensions, u32 num_extensions);
