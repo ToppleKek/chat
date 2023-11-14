@@ -1,15 +1,15 @@
 /*
-Server connection module. Handles all server operations including connecting/disconnecting, fetching users/messages/groups, sending messages, etc.
+    Server connection module. Handles all server operations including connecting/disconnecting, fetching users/messages/groups, sending messages, etc.
 
-Globals:
-cached_users: A vector of users stored after the last heartbeat to the server
-cached_groups: A vector of groups stored after the last heartbeat to the server
-cached_inbox: A vector of messages that have the logged_in_user in the recipient field stored after the last heartbeat to the server
-cached_outbox: A vector of all messages sent during this client session
-logged_in_user: The ClientUser of the currently logged in user
+    Globals:
+    cached_users: A vector of users stored after the last heartbeat to the server
+    cached_groups: A vector of groups stored after the last heartbeat to the server
+    cached_inbox: A vector of messages that have the logged_in_user in the recipient field stored after the last heartbeat to the server
+    cached_outbox: A vector of all messages sent during this client session
+    logged_in_user: The ClientUser of the currently logged in user
 
-Author: Braeden Hong
-  Date: November 5, 2023 - November 12 2023
+    Author: Braeden Hong
+      Date: November 5, 2023 - November 12 2023
 */
 
 #pragma once
@@ -44,7 +44,7 @@ void connect_to_server();
     5. Send the name of the recipient (user/group). As with all string communication,
        first send the length of the string, and then 'length' characters.
     6. Send the message content string (following string sending conventions)
-    7. Receive a status.
+    7. Receive a result.
 
     Parameter 'message': The message to be sent
     Returns whether or not the send was successful
@@ -60,7 +60,7 @@ bool send_message(ClientMessage &message);
     3. Receive a result from the server. If the result is Error::SUCCESS, proceed.
        If it is not abort.
     4. Send the ID of the message to be deleted.
-    5. Receive a status.
+    5. Receive a result.
 
     Parameter 'message': The message to be deleted
     Returns whether or not the deletion was successful
@@ -76,7 +76,7 @@ bool delete_message(ClientMessage &message);
     3. Receive a result from the server. If the result is Error::SUCCESS, proceed.
        If it is not abort.
     4. Send the new status string.
-    5. Receive a status.
+    5. Receive a result.
 
     Parameter 'status': The new status
     Returns whether or not the status update was successful
@@ -89,7 +89,7 @@ bool set_status_of_logged_in_user(const std::string &status);
     The flow between the client and server is as follows:
     1. Send REGISTER_GROUP opcode.
     2. Send the name of the group to register as a string.
-    3. Receive a status.
+    3. Receive a result.
 
     Parameter 'username': The username of the new user
     Returns whether or not the registration was successful
@@ -134,7 +134,7 @@ bool login(const std::string &username);
     The flow between the client and server is as follows:
     1. Send LOGOUT opcode.
     2. Send the ID of the user to logout. (Connection ID is checked to ensure that you cannot logout anyone besides yourself.)
-    3. Receive a status.
+    3. Receive a result.
 
     Returns whether or not the logout attempt was successful
 */

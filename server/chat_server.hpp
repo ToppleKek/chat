@@ -1,3 +1,14 @@
+/*
+    Chat server platform layer module. Allows the application to implement the basic
+    runtime functions init and deinit, and allows the platform layer to
+    implement platform specific services (eg. file I/O).
+    This is a slimmed down version of the client platform layer.
+    See the documentation for the client platform layer.
+
+    Author: Braeden Hong
+      Date: October 30, 2023
+*/
+
 #pragma once
 #include "../util.hpp"
 #include <string>

@@ -17,7 +17,17 @@ public:
     ClientMessage(const std::string &message, Recipient *recipient, User *sender) : Message(message, recipient, sender) {}
     ClientMessage(const std::string &message, Recipient *recipient, User *sender, i32 id) : Message(message, recipient, sender, id) {}
 
+    /*
+        Set whether or not the message has been read (currently unused)
+    */
     void set_read(bool read) { m_read = read; }
+
+    /*
+        Send the message. The connection flow is outlined in the server connection header (server_connection.hpp)
+        Parameter 'socket': The connection socket to the server.
+        Parameter 'connection_id': The user ID of the logged in user.
+        Returns whether or not the send succeeded.
+    */
     bool send(i32 socket, i32 connection_id) {
         assert(socket != -1);
 
@@ -57,6 +67,12 @@ public:
         return result == Error::SUCCESS;
     }
 
+    /*
+        Delete the message. The connection flow is outlined in the server connection header (server_connection.hpp)
+        Parameter 'socket': The connection socket to the server.
+        Parameter 'connection_id': The user ID of the logged in user.
+        Returns whether or not the delete succeeded.
+    */
     bool delete_from_server(i32 socket, i32 connection_id) {
         assert(socket != -1);
 

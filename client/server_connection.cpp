@@ -1,8 +1,8 @@
 /*
-Server connection module implementation.
+    Server connection module implementation.
 
-Author: Braeden Hong
-  Date: November 5, 2023 - November 12 2023
+    Author: Braeden Hong
+      Date: November 5, 2023 - November 12 2023
 */
 
 #include "server_connection.hpp"

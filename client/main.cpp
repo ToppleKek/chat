@@ -1,19 +1,19 @@
 /*
-Main client UI module. Handles UI state, basic UI operations, and frame rendering.
+    Main client UI module. Handles UI state, basic UI operations, and frame rendering.
 
-Globals:
-scale: The current DPI scale of the application
-initial_style: The original Dear ImGui style that the application was initialized with.
-font_config: The font config for Dear ImGui
-last_heartbeat_time: The UNIX timestamp in seconds of the last heartbeat
-new_message_count: The number of messages that are new since the last popup was shown
-must_show_new_message_popup: Whether or not the new message popup must be displayed on the next frame
-current_frame: The current frame that is being processed (0 to ICHIGO_MAX_FRAMES_IN_FLIGHT - 1)
-ChatClient::vk_context: The vulkan context for the application. Shared with the platform layer via the ChatClient namespace
-ChatClient::must_rebuild_swapchain: Boolean stating whether or not the vulkan swapchain is out of date/suboptimal. Shared with the platform layer via the ChatClient namespace
+    Globals:
+    scale: The current DPI scale of the application
+    initial_style: The original Dear ImGui style that the application was initialized with.
+    font_config: The font config for Dear ImGui
+    last_heartbeat_time: The UNIX timestamp in seconds of the last heartbeat
+    new_message_count: The number of messages that are new since the last popup was shown
+    must_show_new_message_popup: Whether or not the new message popup must be displayed on the next frame
+    current_frame: The current frame that is being processed (0 to ICHIGO_MAX_FRAMES_IN_FLIGHT - 1)
+    ChatClient::vk_context: The vulkan context for the application. Shared with the platform layer via the ChatClient namespace
+    ChatClient::must_rebuild_swapchain: Boolean stating whether or not the vulkan swapchain is out of date/suboptimal. Shared with the platform layer via the ChatClient namespace
 
-Author: Braeden Hong
-  Date: October 30, 2023 - November 12 2023
+    Author: Braeden Hong
+      Date: October 30, 2023 - November 12 2023
 */
 
 #include <chrono>
