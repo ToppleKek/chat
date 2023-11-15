@@ -1,19 +1,37 @@
+/*
+    Server chat journal module implementation. See header (journal.hpp) for public function documentation.
+
+    Author: Braeden Hong
+      Date: November 11, 2023 - November 12, 2023
+*/
+
 #include "journal.hpp"
 #include "../util.hpp"
 #include <optional>
 
+// The journal file that is in use
 static std::FILE *journal_file   = nullptr;
+// The size of said file
 static i32 journal_file_size     = 0;
+// If this is set, no transactions can be read back from the file or committed to the file
 static bool invalid_file         = false;
 
 #define INVALID_U32 static_cast<u32>(~0)
 
+/*
+    Get the next non-whitespace character from the file.
+    Returns the next non-whitespace character of 'journal_file'.
+*/
 static inline char next_non_whitespace() {
     char c;
     while (std::isspace(c = std::fgetc(journal_file)));
     return c;
 }
 
+/*
+    Read an unsigned 32-bit integer from the current position in the journal file.
+    Returns an unsigned 32-bit integer parsed (base 10) from the current position in the file, or INVALID_U32 if no number could be parsed.
+*/
 static u32 read_u32() {
     static char buffer[1024];
     buffer[0] = next_non_whitespace();
@@ -37,6 +55,10 @@ static u32 read_u32() {
     return INVALID_U32;
 }
 
+/*
+    Read a string surrounded by quotes from the current position in the journal file.
+    Returns an optional that contains either the string parsed (without the quotes) or no value if a string could not be parsed.
+*/
 static std::optional<std::string> read_quoted_string() {
     static char buffer[1024];
 
@@ -87,6 +109,7 @@ void Journal::commit_transaction(const Transaction *transaction) {
             std::fwrite(buffer, sizeof(char), std::strlen(buffer), journal_file);
         } break;
         case Journal::Operation::NEW_MESSAGE: {
+            // Format: NEW_MESSAGE "sender username" recipient_type "recipient name" "message content"
             const NewMessageTransaction *new_message_transaction = static_cast<const NewMessageTransaction *>(transaction);
             std::snprintf(
                 buffer,
@@ -100,16 +123,19 @@ void Journal::commit_transaction(const Transaction *transaction) {
             std::fwrite(buffer, sizeof(char), std::strlen(buffer), journal_file);
         } break;
         case Journal::Operation::DELETE_MESSAGE: {
+            // Format: DELETE_MESSAGE message_id
             const DeleteMessageTransaction *delete_message_transaction = static_cast<const DeleteMessageTransaction *>(transaction);
             std::snprintf(buffer, sizeof(buffer), "DELETE_MESSAGE %u", delete_message_transaction->id());
             std::fwrite(buffer, sizeof(char), std::strlen(buffer), journal_file);
         } break;
         case Journal::Operation::UPDATE_ID: {
+            // Format: UPDATE_ID new_id
             const UpdateIdTransaction *update_id_transaction = static_cast<const UpdateIdTransaction *>(transaction);
             std::snprintf(buffer, sizeof(buffer), "UPDATE_ID %u", update_id_transaction->id());
             std::fwrite(buffer, sizeof(char), std::strlen(buffer), journal_file);
         } break;
         case Journal::Operation::NEW_GROUP: {
+            // Format: NEW_GROUP "group name" member_count "username" "username" ...(member_count times)
             const NewGroupTransaction *new_group_transaction = static_cast<const NewGroupTransaction *>(transaction);
             std::snprintf(buffer, sizeof(buffer), "NEW_GROUP \"%s\" %u ", new_group_transaction->name().c_str(), new_group_transaction->user_count());
 

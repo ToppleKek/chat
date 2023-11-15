@@ -87,8 +87,8 @@ bool set_status_of_logged_in_user(const std::string &status);
     Register a new user with the server.
 
     The flow between the client and server is as follows:
-    1. Send REGISTER_GROUP opcode.
-    2. Send the name of the group to register as a string.
+    1. Send REGISTER opcode.
+    2. Send the name of the user to register as a string.
     3. Receive a result.
 
     Parameter 'username': The username of the new user
@@ -100,8 +100,8 @@ bool register_user(const std::string &username);
     Register a new group with the server.
 
     The flow between the client and server is as follows:
-    1. Send REGISTER opcode.
-    2. Send the username of the user to register as a string.
+    1. Send REGISTER_GROUP opcode.
+    2. Send the name of the group to register as a string.
     3. Receive a result from the server. If the result is Error::SUCCESS, proceed.
        If it is not abort.
     4. Send the number of users in the group
@@ -158,11 +158,11 @@ bool logout();
     3. Receive a result from the server. If the result is Error::SUCCESS, proceed.
        If it is not abort.
     4. Receive the number of groups. (n)
-    5. Receive the group name (string).
-    6. Receive n groups by doing the following:
-        6a. Receive the number of users in the group. (m)
-        6b. Receive m usernames. These users are in the group.
-    7. Receive a result.
+    5. Receive n groups by doing the following:
+        5a. Receive the group name (string).
+        5b. Receive the number of users in the group. (m)
+        5c. Receive m usernames. These users are in the group.
+    6. Receive a result.
 
     The flow between the client and server for getting MESSAGES is as follows:
     1. Send GET_MESSAGES opcode.
