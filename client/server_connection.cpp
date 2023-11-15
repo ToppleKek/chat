@@ -44,7 +44,7 @@ static i32 find_user_index_by_name(const std::string &name) {
 /*
     The heartbeat thread entry procedure.
 
-    The fow between the client and server is as follows:
+    The flow between the client and server is as follows:
     1. Send HEARTBEAT opcode.
     2. Receive a result. Assert that it is Error::SUCCESS.
 */

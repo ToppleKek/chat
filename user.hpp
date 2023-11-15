@@ -1,3 +1,10 @@
+/*
+    A class representing a single user. Specialized on the client and server.
+
+    Author: Braeden Hong
+      Date: October 30, 2023
+*/
+
 #pragma once
 #include <string>
 

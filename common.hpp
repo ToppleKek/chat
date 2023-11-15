@@ -1,3 +1,10 @@
+/*
+    A collection of commonly used macros, type aliases, and enums.
+
+    Author: Braeden Hong
+      Date: October 30, 2023 - November 12, 2023
+*/
+
 #pragma once
 #include <cstdint>
 

@@ -1,3 +1,11 @@
+/*
+    ServerUser class. A specialization of User that implements server specific functions.
+    Inherits from User. Implements the Recipient interface.
+
+    Author: Braeden Hong
+      Date: October 30, 2023 - November 12 2023
+*/
+
 #pragma once
 #include "chat_server.hpp"
 #include "../user.hpp"
@@ -14,7 +22,8 @@ public:
         return ret;
     }
 
-    i64  connection_fd() const { return m_connection_fd; }
+    // Server specific getter/setter for the socket connection file descriptor
+    i64  connection_fd() const                { return m_connection_fd; }
     void set_connection_fd(i64 connection_fd) { m_connection_fd = connection_fd; }
 
 private:
