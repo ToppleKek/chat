@@ -1061,14 +1061,6 @@ found_present_mode:
         // io.Fonts->Build();
     }
 
-    // Initialize winsock2
-    WSADATA wsa_data;
-    i32 result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-    if (result != NO_ERROR) {
-        std::printf("Failed to init wsa\n");
-        std::exit(1);
-    }
-
     ServerConnection::connect_to_server();
 }
 

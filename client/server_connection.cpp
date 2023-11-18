@@ -71,6 +71,14 @@ static void thread_proc() {
 void ServerConnection::connect_to_server() {
     std::lock_guard<std::mutex> guard(socket_access_mutex);
 
+    // Initialize winsock2
+    WSADATA wsa_data;
+    i32 result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    if (result != NO_ERROR) {
+        std::printf("Failed to init wsa\n");
+        std::exit(1);
+    }
+
     sockaddr_in server_addr{};
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     server_addr.sin_family = AF_INET;

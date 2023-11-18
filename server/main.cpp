@@ -375,10 +375,10 @@ static void register_group(u32 socket) {
     if (!failed) {
         const Journal::NewGroupTransaction transaction(group_name, group_users);
         Journal::commit_transaction(&transaction);
+        groups.append(Group(group_name, std::move(group_users)));
     }
 
     // Step 6
-    groups.append(Group(group_name, std::move(group_users)));
     buffer[0] = failed ? Error::INVALID_REQUEST : Error::SUCCESS;
     send(socket, buffer, 1, 0);
 }
